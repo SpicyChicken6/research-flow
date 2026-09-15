@@ -6,9 +6,9 @@ jobs:
   package:
     runs-on: ubuntu-latest
     env:
-      PIPX_HOME: ${{ runner.temp }}/research-flow-pipx
-      PIPX_BIN_DIR: ${{ runner.temp }}/research-flow-bin
-      PIPX_MAN_DIR: ${{ runner.temp }}/research-flow-man
+      PIPX_HOME: /tmp/research-flow-pipx
+      PIPX_BIN_DIR: /tmp/research-flow-bin
+      PIPX_MAN_DIR: /tmp/research-flow-man
     strategy:
       matrix:
         python: ['3.10', '3.12']
