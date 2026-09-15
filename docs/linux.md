@@ -38,7 +38,15 @@ python -m pip install .
 python server.py --project /absolute/path/to/project.yaml
 ```
 
-## 2. Forward the port from your computer
+## 2. Open the interface
+
+In VS Code Remote-SSH, follow the [integrated browser setup](install.md#open-inside-vs-code-over-remote-ssh)
+and open the app's original private URL. With browser remote access enabled, VS Code
+uses your existing remote connection; no manual forwarding is needed.
+
+### Other browsers (optional)
+
+For a browser on your own computer without VS Code remote access, create an SSH tunnel:
 
 ```bash
 ssh -N -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 \
@@ -146,12 +154,15 @@ not protection against disk loss; include it in your normal private backups.
 **Unauthorized / private URL required:** use the complete URL containing the token,
 not just `http://127.0.0.1:8765`. Recover it using `--print-url`.
 
-**403 / localhost access:** use `127.0.0.1` or `localhost` in your browser, and set
-`--browser-port` when the local and remote ports differ. Direct remote-host access
-and reverse-proxy hosting are not supported by this release.
+**403 / localhost access:** in VS Code, enable browser remote access as described
+above and paste the original server URL, rather than a rewritten local port URL.
+Check for the remote indicator. If using an SSH tunnel with another browser, use
+`127.0.0.1` or `localhost` and set `--browser-port` when the ports differ.
+Direct remote-host access and public reverse-proxy hosting are not supported.
 
-**Address already in use:** stop the previous instance or select another `--port`;
-forward that server port from your computer. Do not kill unrelated processes.
+**Address already in use:** stop the previous instance or select another `--port`
+and open the newly printed URL. If using an SSH tunnel, update its destination port
+too. Do not kill unrelated processes.
 
 **No venv/ensurepip:** install your distribution's Python venv package or use an
 existing Python 3.10+ environment. No sudo is needed by Research Flow itself.

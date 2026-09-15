@@ -4,8 +4,9 @@ This is a personal, single-project editor, not a public or multi-tenant server.
 
 ## Intended deployment
 
-Run the server under your own account, bound to 127.0.0.1, through an authenticated
-SSH local-forwarding session. The command-line entrypoint always requires a random
+Run the server under your own account, bound to 127.0.0.1. For remote use, connect
+through VS Code's integrated browser over authenticated Remote-SSH, or an SSH
+local-forwarding session. The command-line entrypoint always requires a random
 bearer token for project API reads/writes. Each browser tab receives it through the
 private access URL; it is kept separately from the workflow and never exported with
 YAML/JSON or portable project data. There is no public signup, sharing, or permissions

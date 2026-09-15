@@ -44,9 +44,9 @@ Existing files must be valid Research Flow workflows.
 
 ### Working on a remote server?
 
-Forward port **8765** through SSH or VS Code Remote-SSH, then open the printed URL
-in your browser. In VS Code, use **Browser: Open Integrated Browser**. Your changes
-save to the YAML on the server.
+In VS Code Remote-SSH, enable [integrated browser remote access](docs/install.md#open-inside-vs-code-over-remote-ssh),
+then open the printed URL with **Browser: Open Integrated Browser**. No manual port
+forwarding is needed with this setup. Your changes save to the YAML on the server.
 
 See the [installation and VS Code guide](docs/install.md) for setup and upgrades,
 or the [Linux guide](docs/linux.md) for persistent services and troubleshooting.

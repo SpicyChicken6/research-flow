@@ -75,11 +75,26 @@ directory. Neither belongs in a public repository.
 
 ## Open inside VS Code over Remote-SSH
 
-1. Connect to the Linux server with VS Code Remote-SSH.
-2. Run the command above in its remote terminal and keep it running.
-3. In the **Ports** panel, forward remote port **8765** to local port **8765**.
-4. Copy the complete private URL from the server output, including `#token=...`.
-5. Run **Browser: Open Integrated Browser** from the Command Palette and paste it.
+Connect to the Linux server with VS Code Remote-SSH. In VS Code's settings JSON,
+add these settings (merge them into your existing settings):
+
+```json
+{
+  "workbench.browser.enableRemoteProxy": true,
+  "workbench.browser.dataStorage": "workspace"
+}
+```
+
+1. Run `research-flow` in the remote terminal from your research folder and keep it running.
+2. Run **Browser: Open Integrated Browser** from the Command Palette.
+3. Paste the complete private URL printed by the app, including `#token=...`.
+4. Check that the browser address bar shows the remote indicator.
+
+VS Code carries browser traffic over the existing remote connection. Use the
+original server port (normally **8765**); no Ports-panel setup or `--browser-port`
+option is needed. Reopen the browser tab after changing these settings.
+Remote browser access is currently a VS Code preview feature. If the settings are
+unavailable, update VS Code or use the [optional SSH setup](linux.md#other-browsers-optional).
 
 Use the running app URL. Opening a portable HTML export provides **Save copy** and
 does not write the server YAML. Older iframe-based previews may be blocked by the
@@ -87,22 +102,13 @@ app's frame protection; use the current integrated browser or a normal browser.
 The terminal directory at launch controls automatic discovery. VS Code's open
 workspace alone does not select the YAML, and changing it does not switch projects.
 
-If VS Code forwards to a different local port, such as 18765, restart with:
-
-```bash
-research-flow --project "$HOME/research/my-study/workflow.yaml" --browser-port 18765
-```
-
-Forward remote 8765 to local 18765 and use the newly printed URL. For manual SSH
-forwarding, service setup, and troubleshooting, see [the Linux guide](linux.md).
 Recover the URL for an existing running instance with the same project/port options:
 
 ```bash
 research-flow --project "$HOME/research/my-study/workflow.yaml" --print-url
 ```
 
-References: [VS Code SSH forwarding](https://code.visualstudio.com/docs/remote/ssh#_forwarding-a-port-creating-ssh-tunnel),
-[VS Code integrated browser](https://code.visualstudio.com/docs/debugtest/integrated-browser).
+Reference: [VS Code browser remote connections](https://code.visualstudio.com/docs/debugtest/integrated-browser#_browse-over-remote-connections).
 
 ## Alternative: install without pipx
 
