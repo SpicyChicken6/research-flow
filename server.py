@@ -20,7 +20,7 @@ from urllib.parse import urlsplit
 import yaml
 
 ROOT = Path(__file__).resolve().parent
-VERSION = "0.8.3"
+VERSION = "0.8.4"
 MAX_BYTES = 2_000_000
 STATUSES = {'todo', 'in_progress', 'blocked', 'done'}
 MAX_SUBSTEPS = 200
@@ -95,6 +95,8 @@ def validate_project(value):
         by_id[task_id] = task
         if not isinstance(task.get('title'), str) or not task['title'].strip():
             raise ValidationError(f'Give task {task_id} a title.')
+        if 'step_number' in task and (type(task['step_number']) is not int or not 1 <= task['step_number'] <= 9007199254740991):
+            raise ValidationError(f'{task_id}.step_number must be a positive whole number.')
         task.setdefault('status', 'todo')
         if not isinstance(task['status'], str) or task['status'] not in STATUSES:
             raise ValidationError(f'Invalid status for {task_id}.')
@@ -129,6 +131,10 @@ def validate_project(value):
                     raise ValidationError(f'Invalid status for substep {sub["id"]}.')
                 if not isinstance(sub['notes'], str):
                     raise ValidationError(f'Substep {sub["id"]}.notes must be text.')
+
+    assigned = [task['step_number'] for task in tasks if not task.get('parent_id') and 'step_number' in task]
+    if len(set(assigned)) != len(assigned):
+        raise ValidationError('Main step numbers must be unique.')
 
     if any('substeps' in task for task in tasks):
         added = []

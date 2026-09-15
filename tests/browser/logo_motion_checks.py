@@ -53,7 +53,7 @@ with sync_playwright() as pw:
  p.locator('#overview-button').click();p.locator('#focus-button').click();p.locator('#overview-button').click()
  check(p.locator('[data-logo-dots]').evaluate('(el)=>el.getAnimations()[0]===window.__turn'),'rapid view switches reuse the current turn without jumping or queueing')
  check(p.locator('.task-node').count()==8 and p.locator('#overview-button').get_attribute('aria-pressed')=='true','actual view changes happen immediately while the animation is active')
- finish(p);p.locator('#more-menu summary').click();p.locator('[data-action=view-list]').click()
+ finish(p);p.locator('[data-action=view-list]').click()
  check(count(p)==1 and p.locator('#list-view').is_visible(),'switching to Step list triggers motion without blocking the list');finish(p)
  p.locator('#overview-button').click();check(count(p)==1,'returning from Step list to the graph triggers motion');finish(p)
  # Export during a paused turn. The saved template must have pristine SVG, not a frozen frame.

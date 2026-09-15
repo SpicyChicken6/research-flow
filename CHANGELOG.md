@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.8.4 — canvas editing and numbered steps
+
+- Moved Arrange and Step list into the canvas toolbar.
+- Added double-click card renaming, with Enter to apply and Escape to cancel.
+- Added a delete button on each card using the existing confirmation and undo.
+- Grouped parents and descendants in the list with indentation and derived numbers.
+- Added editable main-step numbers. Child numbers follow automatically; assigning
+  an occupied main number swaps the two roots. Number edits persist in YAML and
+  undo together without changing task IDs, relationships, or canvas positions.
+
 ## 0.8.3 — repository and setup cleanup
 
 - Removed one-time publishing helpers, their manifest, the unused validation

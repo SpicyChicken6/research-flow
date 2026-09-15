@@ -7,6 +7,17 @@ def base():return {'schema_version':1,'project':{'name':'Test'},'tasks':[{'id':'
 class ChildrenValidation(unittest.TestCase):
  def test_roundtrip(self):
   p=validate_project(base());self.assertEqual(parse_project(json.dumps(p)),p);self.assertEqual(p['tasks'][2]['parent_id'],'b')
+ def test_step_numbers_roundtrip(self):
+  p=base();p['tasks'][0]['step_number']=7
+  q=parse_project(json.dumps(p));self.assertEqual(q['tasks'][0]['step_number'],7)
+  self.assertNotIn('step_number',q['tasks'][1])
+ def test_invalid_step_numbers(self):
+  for number in [0,-1,1.5,True,'2',None]:
+   p=base();p['tasks'][0]['step_number']=number
+   with self.assertRaises(ValidationError):validate_project(p)
+ def test_duplicate_main_step_numbers(self):
+  p=base();p['tasks'][0]['step_number']=2;p['tasks'].append({'id':'other','title':'Other','step_number':2})
+  with self.assertRaisesRegex(ValidationError,'unique'):validate_project(p)
  def test_parent_cycle(self):
   for v in ['a','b','c']:
    p=base();p['tasks'][0]['parent_id']=v

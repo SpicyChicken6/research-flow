@@ -10,8 +10,8 @@ own machine or Linux server.
 
 ## Features
 
-- **Visual workflow editing** — add, drag, and connect steps on an interactive canvas.
-- **Nested branches** — break work into smaller steps, collapse groups, and move branches together.
+- **Canvas editing** — arrange, connect, rename, and delete steps directly on the canvas.
+- **Nested branches** — organize numbered steps and children, with an indented list view.
 - **Focus and overview** — zoom into a branch or navigate the whole project with the minimap.
 - **Details in one place** — track each step's status, goals, notes, inputs, and outputs.
 - **Undo and redo** — revisit changes as your plan evolves.
@@ -22,7 +22,7 @@ own machine or Linux server.
 Requires **Python 3.10+** and [pipx](https://pipx.pypa.io/stable/installation/).
 
 ```bash
-pipx install https://github.com/SpicyChicken6/research-flow/releases/download/v0.8.3/research_flow-0.8.3-py3-none-any.whl
+pipx install https://github.com/SpicyChicken6/research-flow/releases/download/v0.8.4/research_flow-0.8.4-py3-none-any.whl
 pipx ensurepath
 ```
 

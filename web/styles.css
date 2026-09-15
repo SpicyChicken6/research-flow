@@ -87,3 +87,24 @@ dialog{background:#fff;color:var(--ink);width:min(445px,calc(100vw - 32px));max-
 /* This graph has its own transform-based camera. Native focus scrolling must not
    move its fixed minimap or toolbar along with off-screen graph nodes. */
 .canvas{overflow:hidden;overflow:clip}
+
+/* Frequently used controls stay on the working surface. */
+.canvas-toolbar{flex-wrap:wrap;align-items:flex-start}
+.canvas-tools{display:flex;gap:6px;align-items:center}
+.table-step{display:flex;align-items:baseline;gap:7px}
+.table-number{color:var(--secondary);flex-shrink:0;font-variant-numeric:tabular-nums}
+.table-task{overflow-wrap:anywhere}
+.node-title-input{position:absolute;left:12px;top:45px;width:calc(100% - 24px);height:44px;padding:4px 5px;font-size:15px;font-weight:600;background:#fff;cursor:text;user-select:text;z-index:4}
+.child-node .node-title-input{top:39px;font-size:14px;height:40px}
+@media(max-width:700px){.canvas-toolbar{row-gap:6px}.list-view{padding-top:118px}.canvas-tools{gap:5px}}
+
+.task-index{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.step-number-button{padding:0;text-align:left;border-radius:3px;cursor:text}
+.step-number-button:hover{color:var(--blue);text-decoration:underline}
+
+.node-delete{margin-left:auto;height:24px;width:26px;border:1px solid var(--line);background:#fff;border-radius:5px;display:grid;place-items:center;color:#8c5555;opacity:0}
+.node-delete .icon{width:13px;height:13px}
+.node-delete:hover{color:#a12e2e;background:#fff3f3}
+.task-node:hover .node-delete,.task-node.selected .node-delete,.task-node:focus-within .node-delete{opacity:1}
+.node-add-child{margin-left:0}
+@media(hover:none){.node-delete{opacity:1}}

@@ -69,6 +69,7 @@ export function validateProject(input) {
         return normalizedSub;
       });
     }
+    if (Object.hasOwn(normalized, 'step_number') && (!Number.isSafeInteger(normalized.step_number) || normalized.step_number < 1)) throw Error(`${t.id}.step_number must be a positive whole number.`);
     if (normalized.parent_id !== undefined && normalized.parent_id !== null && typeof normalized.parent_id !== 'string') throw Error(`${t.id}.parent_id must be a task ID or null.`);
     return normalized;
   });
@@ -94,6 +95,8 @@ export function validateProject(input) {
     if (project.tasks.length > 500) throw Error('Converting existing substeps would exceed the 500-step limit. Your original file is unchanged.');
     return validateProject(project);
   }
+  const assigned = project.tasks.filter(t=>!t.parent_id && t.step_number !== undefined).map(t=>t.step_number);
+  if(new Set(assigned).size !== assigned.length)throw Error('Main step numbers must be unique.');
   const parents = new Map(project.tasks.map(t => [t.id, t.parent_id]));
   for (const task of project.tasks) {
     if (task.parent_id != null && !ids.has(task.parent_id)) throw Error(`Unknown parent “${task.parent_id}” on ${task.id}.`);
@@ -158,6 +161,7 @@ export function addBranchDependency(project, source, target) {
   if (neighbors.some(t => t.parent_id ? t.parent_id !== parent && !ancestors.has(t.id)
       : childrenOf(next,t.id).length)) return next;
   candidate.parent_id = parent;
+  delete candidate.step_number;
   return validateProject(next);
 }
 
@@ -166,7 +170,7 @@ export function removeTask(project, id) {
   const parent = next.tasks.find(t => t.id === id)?.parent_id ?? null;
   next.tasks = next.tasks.filter(t => t.id !== id).map(t => {
     t.depends_on = t.depends_on.filter(d => d !== id);
-    if (t.parent_id === id) { if (parent) t.parent_id = parent; else delete t.parent_id; }
+    if (t.parent_id === id) { delete t.step_number; if (parent) t.parent_id = parent; else delete t.parent_id; }
     return t;
   });
   delete next.layout.positions[id];
@@ -256,6 +260,7 @@ export const taskSize = task => task?.parent_id ? {width:212,height:136} : {widt
 export function setParent(project, id, parent = null) {
   const next = clone(project), task = next.tasks.find(t => t.id === id);
   if (!task) throw Error('Step not found.');
+  if ((task.parent_id ?? null) !== parent) delete task.step_number;
   if (parent === null) delete task.parent_id; else task.parent_id = parent;
   return validateProject(next);
 }
@@ -309,4 +314,30 @@ function layoutHierarchy(project) {
   }
   next.layout ??= {};next.layout.positions=positions;
   return next;
+}
+
+/** Hierarchical display numbers are derived without rewriting workflow data. */
+export function stepOutline(project) {
+  const branches=new Map(), roots=project.tasks.filter(t=>!t.parent_id);
+  const used=new Set(roots.filter(t=>t.step_number!==undefined).map(t=>t.step_number));
+  const numbers=new Map();let next=1;
+  for(const task of roots){
+    if(task.step_number!==undefined)numbers.set(task.id,task.step_number);
+    else {while(used.has(next))next++;numbers.set(task.id,next);used.add(next++);}
+  }
+  for(const task of project.tasks){const parent=task.parent_id || null;if(!branches.has(parent))branches.set(parent,[]);branches.get(parent).push(task);}
+  const rows=[];
+  function append(task,number,depth){rows.push({task,number,depth});(branches.get(task.id)||[]).forEach((child,index)=>append(child,`${number}.${index+1}`,depth+1));}
+  roots.sort((a,b)=>numbers.get(a.id)-numbers.get(b.id)).forEach(task=>append(task,String(numbers.get(task.id)),0));
+  return rows;
+}
+/** Assign a main-step number, swapping any occupant in a single undoable edit. */
+export function setStepNumber(project,id,number) {
+  if(!Number.isSafeInteger(number)||number<1)throw Error('Step number must be a positive whole number.');
+  const next=clone(project),task=next.tasks.find(t=>t.id===id);
+  if(!task || task.parent_id)throw Error('Only main steps have editable numbers.');
+  const roots=stepOutline(next).filter(row=>row.depth===0),old=Number(roots.find(row=>row.task.id===id).number);
+  if(old===number)return next;
+  for(const row of roots)row.task.step_number=row.task.id===id?number:Number(row.number)===number?old:Number(row.number);
+  return validateProject(next);
 }

@@ -67,7 +67,7 @@ with sync_playwright() as pw:
  check(float(p.locator('.mini-viewport').get_attribute('width'))<float(previous),'map viewport shrinks as graph zoom increases')
  p.locator('#more-menu summary').click();p.locator('#map-option').click();check(p.locator('#minimap-wrap').is_hidden(),'More can hide the restored map')
  p.locator('#more-menu summary').click();p.locator('#map-option').click();check(p.locator('#minimap-wrap').is_visible(),'More can restore the map')
- p.locator('#more-menu summary').click();p.locator('[data-action=view-list]').click();check(p.locator('#minimap-wrap').is_hidden(),'map does not float over the text-only Step list')
+ p.locator('[data-action=view-list]').click();check(p.locator('#minimap-wrap').is_hidden(),'map does not float over the text-only Step list')
  p.locator('#overview-button').click();check(p.locator('#minimap-wrap').is_visible(),'returning to graph restores minimap')
  p.close()
  # Add connected step, as well as freehand links, now inherit parentage.

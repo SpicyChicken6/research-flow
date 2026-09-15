@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {validateProject, insertBlankStep, setParent, descendantIds, ancestorIds, childrenOf, taskSize, addDependency, removeTask, autoLayout, moveBranch, toYaml} from '../web/model.mjs';
+import {validateProject, insertBlankStep, setParent, descendantIds, ancestorIds, childrenOf, taskSize, addDependency, removeTask, autoLayout, moveBranch, toYaml, stepOutline, setStepNumber} from '../web/model.mjs';
 const fresh=()=>validateProject({schema_version:1,project:{name:'Test'},tasks:[{id:'a',title:'A'},{id:'b',title:'B'},{id:'c',title:'C',parent_id:'a'},{id:'d',title:'D',parent_id:'c'}]});
 test('children and descendants have independent stable IDs',()=>{const p=fresh();assert.deepEqual(childrenOf(p,'a').map(t=>t.id),['c']);assert.deepEqual([...descendantIds(p,'a')],['c','d']);assert.deepEqual(ancestorIds(p,'d'),['c','a']);});
 test('parenthood creates no dependency or status rollup',()=>{const p=fresh();for(const t of p.tasks)assert.deepEqual(t.depends_on,[]);p.tasks[3].status='done';assert.equal(validateProject(p).tasks[0].status,'todo');});
@@ -25,3 +25,37 @@ test('empty legacy lists removed without creating children',()=>{const p=fresh()
 test('legacy validation still refuses corrupt entries',()=>{const p=fresh();p.tasks[0].substeps=[{id:'x',title:'X',status:'bad'}];assert.throws(()=>validateProject(p),/status/);});
 test('500-task limit includes converted children; no silent data loss',()=>{const p={schema_version:1,project:{name:'Large'},tasks:Array.from({length:500},(_,i)=>({id:`t${i}`,title:'Task'}))};p.tasks[0].substeps=[{id:'x',title:'X'}];assert.throws(()=>validateProject(p),/500-step/);assert.throws(()=>insertBlankStep(validateProject({...p,tasks:p.tasks.map(t=>({id:t.id,title:t.title}))}),{x:0,y:0}),/500/);});
 test('parent IDs and child notes included in YAML export',()=>{const p=fresh();p.tasks[3].notes='A: B\nKeep';const s=toYaml(p);assert.match(s,/parent_id: "c"/);assert.match(s,/A: B\\nKeep/);});
+
+test('outline groups parents before children even when the file is interleaved',()=>{
+  const p=fresh(),before=cloneForTest(p),rows=stepOutline(p);
+  assert.deepEqual(rows.map(r=>[r.task.id,r.number,r.depth]),[['a','1',0],['c','1.1',1],['d','1.1.1',2],['b','2',0]]);
+  assert.deepEqual(p,before);
+});
+function cloneForTest(p){return JSON.parse(JSON.stringify(p));}
+test('changing an occupied root number swaps roots and updates every descendant',()=>{
+  const p=fresh(),q=setStepNumber(p,'a',2);
+  assert.deepEqual(stepOutline(q).map(r=>[r.task.id,r.number]),[['b','1'],['a','2'],['c','2.1'],['d','2.1.1']]);
+  assert.equal(p.tasks[0].step_number,undefined);
+  assert.deepEqual(q.tasks.map(t=>[t.id,t.parent_id,t.depends_on]),p.tasks.map(t=>[t.id,t.parent_id,t.depends_on]));
+  assert.deepEqual(q.layout,p.layout);
+  assert.deepEqual(validateProject(q),q);
+  assert.match(toYaml(q),/step_number: 2/);
+});
+test('explicit numbering reserves numbers while added roots take a free number',()=>{
+  let p=setStepNumber(fresh(),'a',7);p=insertBlankStep(p,{x:0,y:0}).document;
+  assert.deepEqual(stepOutline(p).filter(r=>!r.depth).map(r=>r.number),['1','2','7']);
+  assert.equal(stepOutline(p).find(r=>r.task.id==='d').number,'7.1.1');
+});
+test('invalid, duplicate, and child number edits are rejected',()=>{
+  for(const n of [0,-1,1.5,NaN,Infinity,true,'2'])assert.throws(()=>setStepNumber(fresh(),'a',n),/whole number/);
+  assert.throws(()=>setStepNumber(fresh(),'c',4),/main steps/);
+  const p=fresh();p.tasks[0].step_number=2;p.tasks[1].step_number=2;
+  assert.throws(()=>validateProject(p),/unique/);
+});
+test('reparenting derives numbers from the new branch; promotion gets a free root number',()=>{
+  const p=setStepNumber(fresh(),'a',7),q=setParent(p,'a','b');
+  assert.equal(q.tasks[0].step_number,undefined);
+  assert.equal(stepOutline(q).find(r=>r.task.id==='d').number,'2.1.1.1');
+  const promoted=removeTask(q,'b');validateProject(promoted);
+  assert.equal(stepOutline(promoted).find(r=>r.task.id==='d').number,'1.1.1');
+});
