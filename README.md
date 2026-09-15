@@ -1,6 +1,6 @@
 # Research Flow
 
-**A clear view of your research, from question to discovery.**
+**A clear view of your research, from action to completion.**
 
 Research Flow is a visual planner for a single research project. Connect steps,
 organize them into branches, and keep your workflow in a readable YAML file on your
