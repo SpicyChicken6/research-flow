@@ -1,6 +1,12 @@
 # Changelog
 
-## Unreleased — first-upload review
+## 0.8.1 — installable Linux/server app
+
+- Added a pipx-compatible Python distribution and `research-flow` command, with all
+  browser assets bundled. Existing source-checkout launchers remain supported.
+- Added installation, update, and VS Code Remote-SSH instructions.
+- Added isolated wheel/source-distribution installation checks to Linux CI.
+- Published the source repository publicly; running servers remain token-protected.
 
 - Reject non-string task IDs and statuses in the browser, matching server validation.
 - Return a validation error for extremely large integers instead of overflowing

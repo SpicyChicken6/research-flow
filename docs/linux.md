@@ -2,6 +2,10 @@
 
 ## 1. Install and launch
 
+For the installed `research-flow` command, begin with [the installation guide](install.md).
+It supports all server options shown below; replace `bash start.sh` with
+`research-flow`. The source-checkout launcher remains available as follows.
+
 Use a user-owned application directory, for example `~/apps/research-flow`.
 Keep project data elsewhere. Run as your regular account, not root.
 

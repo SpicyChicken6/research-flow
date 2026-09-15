@@ -21,7 +21,39 @@ No project library, dashboards, upcoming-step suggestions, AI execution, or acco
 service. Original logos, the restrained animation, and the latest thin rectangular
 title divider are preserved.
 
-## Run on a remote Linux server
+## Install the app on Linux
+
+Requires **Python 3.10+** and [pipx](https://pipx.pypa.io/stable/installation/).
+Install the released app in its own environment:
+
+```bash
+pipx install https://github.com/SpicyChicken6/research-flow/releases/download/v0.8.1/research_flow-0.8.1-py3-none-any.whl
+pipx ensurepath
+```
+
+If the command is not found, reopen your terminal after `pipx ensurepath`.
+From any directory, create or open a workflow on the machine running the app:
+
+```bash
+research-flow --project "$HOME/research/my-study/workflow.yaml" --init
+```
+
+`--init` creates a blank file only if it is missing. Existing files are preserved.
+The selected YAML path determines where **Save** writes; your current folder and
+VS Code workspace do not determine the save location. Keep the server running.
+With no `--project`, data lives at `~/.local/share/research-flow/project.yaml`
+(or under `XDG_DATA_HOME` when configured).
+
+For a remote server, forward port **8765** through SSH or VS Code Remote-SSH and
+open the complete private URL printed by the app. In current VS Code Desktop, use
+**Browser: Open Integrated Browser** to open that URL inside the editor.
+An exported HTML file uses **Save copy**, not server-side YAML saving.
+
+See [installation and VS Code instructions](docs/install.md) for setup, upgrades,
+alternative installation methods, and choosing the YAML file. This repository is
+public; access to a running instance still requires its private token.
+
+## Run from a source checkout on a remote Linux server
 
 Requires **Python 3.10+**, `venv`, and PyYAML. Git is needed for source control; Node
 and Playwright are only needed to run development tests. No frontend build is needed.
@@ -179,21 +211,22 @@ mean CI has run on GitHub. In restricted environments, `tests/transport_checks.p
 provides an explicitly simulated-browser transport check against the real HTTP API;
 it is not a substitute for the direct browser test. See [testing notes](docs/testing.md).
 
-## Publish this bundle to GitHub
+## Build an installable distribution
 
-With Git and GitHub CLI installed and authenticated as `SpicyChicken6`:
+From a development environment in the source checkout:
 
 ```bash
-gh auth login --hostname github.com
-python3 scripts/publish_github.py
+python -m pip install build twine
+python -m build
+python -m twine check dist/*.whl dist/*.tar.gz
 ```
 
-The script creates **a new private `SpicyChicken6/research-flow` repository**. It
-initializes Git when needed, stages only the reviewed `.release-files` manifest,
-pushes the source, and verifies the remote commit. It refuses to replace an existing
-remote or force-push. It does not upload your default workflow, backups, tokens,
-virtual environment, generated exports, or test output. Review the source before
-publishing. For an intentionally different name use `--repo NAME`.
+The wheel includes the Python server and its web assets. Workflow YAML, tokens,
+backups, generated exports and test output are excluded. CI installs both the wheel
+and source distribution, then verifies saving from outside the checkout.
+Downloads are published on [GitHub Releases](https://github.com/SpicyChicken6/research-flow/releases).
+The historical `scripts/publish_github.py` helper only creates new private
+repositories; it is not an installer or an updater for this existing repository.
 
 ## Source layout
 

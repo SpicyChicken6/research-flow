@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "research-flow"
+version = "0.8.1"
+description = "A single-project visual research workflow editor with YAML storage"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = ["PyYAML>=6.0.2,<7"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Operating System :: POSIX :: Linux",
+  "Topic :: Scientific/Engineering",
+]
+
+[project.scripts]
+research-flow = "research_flow.server:main"
+
+[project.urls]
+Homepage = "https://github.com/SpicyChicken6/research-flow"
+Issues = "https://github.com/SpicyChicken6/research-flow/issues"
+
+# Keep existing source launchers and tests working, while installing a namespaced
+# package with its own web assets. No workflow data belongs in the distribution.
+[tool.setuptools]
+packages = ["research_flow"]
+package-dir = {research_flow = "."}
+include-package-data = false
+
+[tool.setuptools.package-data]
+research_flow = [
+  "web/index.html", "web/app.js", "web/model.mjs", "web/connection.mjs",
+  "web/styles.css", "web/assets/research-flow-icon-light.svg",
+  "web/assets/research-flow-icon-dark.svg",
+]

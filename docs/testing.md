@@ -1,4 +1,21 @@
-# Release verification — 0.8.0
+# Release verification
+
+## Installable app — 0.8.1
+
+Local checks passed on macOS with Python 3.13: all 73 Python tests, 92 JavaScript
+tests, and the 21 direct-browser checks. The wheel and source archive both passed
+`twine check`. A fresh pipx wheel installation and a separate source-archive
+installation each passed `tests/installed_checks.py` from a temporary directory
+outside the source checkout. `python -m research_flow --version` also passed.
+
+Installation checks cover all bundled web assets, explicit YAML paths containing
+spaces, the default external data path, authenticated saving, unauthorized reads,
+stale revisions, backups, token persistence, and graceful shutdown. The wheel
+contents were inspected: only the three Python modules, seven web assets, and
+package metadata are included. No workflow data, exports or credentials are bundled.
+
+GitHub CI repeats wheel installation through pipx and source-archive installation
+on Linux with Python 3.10 and 3.12. Check the commit's Actions run for its results.
 
 ## First-upload review — September 15, 2026
 
