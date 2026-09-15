@@ -10,11 +10,13 @@ Use a user-owned application directory, for example `~/apps/research-flow`.
 Keep project data elsewhere. Run as your regular account, not root.
 
 ```bash
-cd ~/apps/research-flow
-bash start.sh
+cd ~/research/my-project
+bash ~/apps/research-flow/start.sh
 ```
 
-For an existing plan:
+This opens the only YAML in your current research folder, or creates `workflow.yaml`
+if none exists. Multiple YAML files require an explicit choice. For an existing plan
+from the application source folder:
 
 ```bash
 bash start.sh --project "$HOME/research/my-project/project.yaml"
@@ -85,13 +87,15 @@ systemctl --user status research-flow
 
 Set up the virtual environment with `bash start.sh` once, then stop that foreground
 instance before starting the service. The service uses the existing environment;
-it does not download dependencies during startup. The default template uses the
-external user-data project.
+it does not download dependencies during startup. The default template explicitly
+selects `~/.local/share/research-flow/project.yaml` and initializes it only if missing.
+Edit its `--project` argument to use a different workflow. Update older installed
+service files to include an explicit path before upgrading to 0.8.2.
 
 Retrieve the URL without starting another server:
 
 ```bash
-bash start.sh --print-url
+bash start.sh --project "$HOME/.local/share/research-flow/project.yaml" --print-url
 ```
 
 For a service with custom `--project`, `--port`, `--browser-port`, or `--token-file`,
@@ -155,9 +159,14 @@ existing Python 3.10+ environment. No sudo is needed by Research Flow itself.
 **File changed elsewhere:** download the browser draft first, inspect the on-disk
 change, and use Reload when it is safe. There is no automatic merge.
 
-**Blank project after upgrading:** the new default is outside the source tree.
-Restart with `--project /path/to/your/old/project.yaml`; your original file has not
-been deleted or overwritten.
+**Blank project after upgrading:** version 0.8.2 defaults to the launch directory.
+Restart with `--project /path/to/your/old/project.yaml`. The old global default was
+`~/.local/share/research-flow/project.yaml` (or under `XDG_DATA_HOME`); it has not
+been moved, deleted or overwritten.
+
+**Multiple YAML files:** choose the workflow explicitly with
+`research-flow --project ./my-study.yaml`. Configuration YAML files also count
+during discovery; the app does not guess which one you intended.
 
 ## References
 

@@ -1,6 +1,6 @@
 # Install Research Flow
 
-Research Flow 0.8.1 installs a `research-flow` command. It runs a small Python server
+Research Flow 0.8.2 installs a `research-flow` command. It runs a small Python server
 and serves the existing browser interface. Linux needs Python 3.10+; Node, a source
 checkout, and a server-side desktop are not required to run the installed app.
 
@@ -17,7 +17,7 @@ sudo apt install pipx python3-venv
 Then install Research Flow as your regular user:
 
 ```bash
-pipx install https://github.com/SpicyChicken6/research-flow/releases/download/v0.8.1/research_flow-0.8.1-py3-none-any.whl
+pipx install https://github.com/SpicyChicken6/research-flow/releases/download/v0.8.2/research_flow-0.8.2-py3-none-any.whl
 pipx ensurepath
 ```
 
@@ -28,7 +28,23 @@ The package is distributed through GitHub Releases, not PyPI; use the full URL.
 
 ## Select where to save
 
-Run from any folder on the Linux server:
+For automatic selection, run inside your research folder on the Linux server:
+
+```bash
+cd ~/research/my-study
+research-flow
+```
+
+- One `.yaml` or `.yml` file in that folder: open it.
+- No YAML files: create a blank `workflow.yaml` there.
+- Several YAML files: stop and ask you to choose with `--project`.
+
+Discovery only examines this directory, not subfolders. The selected file must
+validate as a Research Flow workflow. Invalid or unrelated YAML is not overwritten,
+and opening an existing workflow does not rewrite it before you click **Save**.
+Changing your shell directory later does not change an already running instance.
+
+To select a path explicitly from any folder:
 
 ```bash
 research-flow --project "$HOME/research/my-study/workflow.yaml" --init
@@ -44,8 +60,14 @@ research-flow --project "$HOME/research/my-study/workflow.yaml"
 Click **Save** in the interface to write to that exact file on the server.
 Use an absolute path to make the destination independent of the launch directory.
 Relative `--project` paths are resolved against the terminal's current directory.
-Without `--project`, the default is `~/.local/share/research-flow/project.yaml`,
-respecting `XDG_DATA_HOME` if set. Each server instance edits one YAML file.
+Each server instance edits one YAML file.
+
+**Upgrading from 0.8.0/0.8.1:** those versions used a global default data directory.
+To continue that workflow, pass
+`--project "$HOME/.local/share/research-flow/project.yaml"` (or your previous
+`XDG_DATA_HOME` location). Version 0.8.2 does not move or delete it and no longer
+uses `XDG_DATA_HOME` to choose the default. Update existing service commands to
+include an explicit `--project` path before restarting them.
 
 The app keeps the 20 most recent backups in `.research-flow/backups/<filename>/`
 next to your YAML. The access token also lives in that adjacent `.research-flow`
@@ -62,7 +84,8 @@ directory. Neither belongs in a public repository.
 Use the running app URL. Opening a portable HTML export provides **Save copy** and
 does not write the server YAML. Older iframe-based previews may be blocked by the
 app's frame protection; use the current integrated browser or a normal browser.
-VS Code's open workspace folder has no effect on the selected YAML path.
+The terminal directory at launch controls automatic discovery. VS Code's open
+workspace alone does not select the YAML, and changing it does not switch projects.
 
 If VS Code forwards to a different local port, such as 18765, restart with:
 
@@ -88,7 +111,7 @@ Create a dedicated virtual environment, then install the release into it:
 ```bash
 python3 -m venv "$HOME/.local/share/research-flow-env"
 "$HOME/.local/share/research-flow-env/bin/python" -m pip install \
-  https://github.com/SpicyChicken6/research-flow/releases/download/v0.8.1/research_flow-0.8.1-py3-none-any.whl
+  https://github.com/SpicyChicken6/research-flow/releases/download/v0.8.2/research_flow-0.8.2-py3-none-any.whl
 "$HOME/.local/share/research-flow-env/bin/research-flow" --project "$HOME/research/my-study/workflow.yaml" --init
 ```
 

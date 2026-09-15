@@ -27,22 +27,28 @@ Requires **Python 3.10+** and [pipx](https://pipx.pypa.io/stable/installation/).
 Install the released app in its own environment:
 
 ```bash
-pipx install https://github.com/SpicyChicken6/research-flow/releases/download/v0.8.1/research_flow-0.8.1-py3-none-any.whl
+pipx install https://github.com/SpicyChicken6/research-flow/releases/download/v0.8.2/research_flow-0.8.2-py3-none-any.whl
 pipx ensurepath
 ```
 
 If the command is not found, reopen your terminal after `pipx ensurepath`.
-From any directory, create or open a workflow on the machine running the app:
+Go to your research folder and launch:
 
 ```bash
-research-flow --project "$HOME/research/my-study/workflow.yaml" --init
+cd ~/research/my-study
+research-flow
 ```
 
-`--init` creates a blank file only if it is missing. Existing files are preserved.
-The selected YAML path determines where **Save** writes; your current folder and
-VS Code workspace do not determine the save location. Keep the server running.
-With no `--project`, data lives at `~/.local/share/research-flow/project.yaml`
-(or under `XDG_DATA_HOME` when configured).
+With no `--project`, the app uses the only `.yaml` or `.yml` file in the current
+directory. If none exists, it creates `workflow.yaml`. If several exist, it stops
+and asks you to select one with `--project`. Discovery does not search subfolders.
+The YAML must be a valid Research Flow workflow; unrelated or invalid YAML is never
+overwritten. Click **Save** to update the selected file, and keep the server running.
+
+To choose a path explicitly from any directory, use
+`research-flow --project /absolute/path/to/workflow.yaml`. Add `--init` to create it
+if missing. The terminal's current directory controls automatic discovery; merely
+changing VS Code's open workspace does not switch a running app's project.
 
 For a remote server, forward port **8765** through SSH or VS Code Remote-SSH and
 open the complete private URL printed by the app. In current VS Code Desktop, use
@@ -58,24 +64,25 @@ public; access to a running instance still requires its private token.
 Requires **Python 3.10+**, `venv`, and PyYAML. Git is needed for source control; Node
 and Playwright are only needed to run development tests. No frontend build is needed.
 
-In the downloaded source folder on the server:
+From your research folder, point to the downloaded application's launcher:
 
 ```bash
-bash start.sh
+cd ~/research/my-study
+bash ~/apps/research-flow/start.sh
 ```
 
 On its first run, the launcher creates `.venv` and installs the one runtime
-dependency. The server creates a blank workflow at:
+dependency. The server opens the only YAML in the current directory, or creates:
 
 ```text
-~/.local/share/research-flow/project.yaml
+./workflow.yaml
 ```
 
-`XDG_DATA_HOME` is respected. Application updates do not touch this directory.
-To continue an **existing** workflow instead:
+Application updates do not touch this research directory. To select an **existing**
+workflow explicitly instead:
 
 ```bash
-bash start.sh --project /absolute/path/to/your/project.yaml
+bash ~/apps/research-flow/start.sh --project /absolute/path/to/your/project.yaml
 ```
 
 An explicit missing path is not silently created: use `--init` to initialize it.
@@ -99,7 +106,8 @@ it does not download a replacement HTML in server mode.
 For an already running instance, recover its private URL with:
 
 ```bash
-bash start.sh --print-url
+# Run in the same research folder used to launch the server.
+bash ~/apps/research-flow/start.sh --print-url
 # For an existing custom workflow, include the same --project used to launch it.
 ```
 
@@ -128,8 +136,12 @@ and point it at your existing YAML using `--project`. Keep the previous file and
 cards when loaded; a read does not rewrite your file. The next explicit Save writes
 the normalized structure and keeps the preceding bytes in a backup.
 
-The default location changed in 0.8.0. A `project.yaml` left inside the code checkout
-is **not** selected automatically. Use `--project` to continue it.
+The default changed in **0.8.2** to the current directory. To continue the global
+default from 0.8.0/0.8.1, use
+`research-flow --project "$HOME/.local/share/research-flow/project.yaml"`
+(or your previous `XDG_DATA_HOME` path). Existing files are not moved or deleted.
+Services should specify an absolute `--project` path; the supplied systemd template
+does this explicitly so the service's working directory does not select its data.
 
 ## Data model
 

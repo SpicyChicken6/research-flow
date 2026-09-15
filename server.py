@@ -20,7 +20,7 @@ from urllib.parse import urlsplit
 import yaml
 
 ROOT = Path(__file__).resolve().parent
-VERSION = "0.8.1"
+VERSION = "0.8.2"
 MAX_BYTES = 2_000_000
 STATUSES = {'todo', 'in_progress', 'blocked', 'done'}
 MAX_SUBSTEPS = 200
@@ -351,11 +351,16 @@ def make_handler(store, *, auth_token=None, browser_port=None):
     return Handler
 
 def default_project_path():
-    """User data lives outside the checkout so updates cannot replace a workflow."""
-    base = Path(os.environ.get('XDG_DATA_HOME', Path.home() / '.local' / 'share'))
-    if not base.is_absolute():
-        raise ValidationError('XDG_DATA_HOME must be an absolute path.')
-    return base / 'research-flow' / 'project.yaml'
+    """Use the only YAML in the launch directory, or a new workflow.yaml."""
+    directory = Path.cwd()
+    candidates = sorted(path for path in directory.iterdir()
+                        if path.suffix.lower() in {'.yaml', '.yml'}
+                        and (path.is_file() or path.is_symlink()))
+    if len(candidates) > 1:
+        names = ', '.join(repr(path.name) for path in candidates)
+        raise ValidationError(f'Multiple YAML files in the current directory: {names}. '
+                              'Choose one with --project /path/to/file.yaml.')
+    return candidates[0] if candidates else directory / 'workflow.yaml'
 
 
 def initialize_project(path):
@@ -425,7 +430,7 @@ def valid_port(value):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--version', action='version', version=f'Research Flow {VERSION}')
-    parser.add_argument('--project', type=Path, help='Existing project file. Defaults to your user data directory.')
+    parser.add_argument('--project', type=Path, help='Project file. By default, use the only YAML in the current directory, or create workflow.yaml if none exists.')
     parser.add_argument('--init', action='store_true', help='Create a blank project if the selected file is missing; never overwrite it.')
     parser.add_argument('--port', type=valid_port, default=8765)
     parser.add_argument('--browser-port', type=valid_port, help='Local forwarded port when it differs from --port.')

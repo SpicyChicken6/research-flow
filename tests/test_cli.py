@@ -44,7 +44,7 @@ class CLITests(unittest.TestCase):
             env = {**os.environ, 'XDG_DATA_HOME': str(data)}
             relay = Relay(('127.0.0.1', 0), Forward)
             local_port = relay.server_address[1]
-            # Launch from a different CWD; code and data locations must be independent.
+            # Launch outside the checkout; the default workflow belongs to this CWD.
             proc = subprocess.Popen(
                 [sys.executable, str(ROOT / 'server.py'), '--port', '0',
                  '--browser-port', str(local_port)], cwd=temp, env=env,
@@ -94,13 +94,14 @@ class CLITests(unittest.TestCase):
                 doc['document']['project']['name'] = 'CLI forwarded smoke test'
                 status, _ = request('PUT', '/api/project', doc)
                 self.assertEqual(status, 200)
-                workflow = data / 'research-flow/project.yaml'
+                workflow = Path(temp) / 'workflow.yaml'
+                self.assertFalse(data.exists(), 'Default launch must not create XDG data')
                 self.assertIn('CLI forwarded smoke test', workflow.read_text())
                 self.assertNotIn(token, workflow.read_text())
-                self.assertTrue(list((workflow.parent / '.research-flow/backups/project.yaml').glob('*.yaml')))
+                self.assertTrue(list((workflow.parent / '.research-flow/backups/workflow.yaml').glob('*.yaml')))
                 if os.name == 'posix':
                     self.assertEqual(workflow.stat().st_mode & 0o777, 0o600)
-                    self.assertEqual((workflow.parent / '.research-flow/project.yaml.token').stat().st_mode & 0o777, 0o600)
+                    self.assertEqual((workflow.parent / '.research-flow/workflow.yaml.token').stat().st_mode & 0o777, 0o600)
             finally:
                 proc.terminate()
                 try:

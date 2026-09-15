@@ -6,7 +6,7 @@ Description=Research Flow private workflow editor
 [Service]
 Type=simple
 WorkingDirectory=%h/apps/research-flow
-ExecStart=%h/apps/research-flow/.venv/bin/python %h/apps/research-flow/server.py
+ExecStart=%h/apps/research-flow/.venv/bin/python %h/apps/research-flow/server.py --project %h/.local/share/research-flow/project.yaml --init
 Restart=on-failure
 RestartSec=3
 UMask=0077

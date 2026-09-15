@@ -1,5 +1,18 @@
 # Release verification
 
+## Current-directory discovery — 0.8.2
+
+Local verification passed: 78 Python tests, 92 JavaScript tests, and 21 direct-browser
+checks. A fresh pipx installation passed the installed-app checks for an explicit
+path, an empty launch directory, and an existing workflow with an arbitrary `.yml`
+filename. Opening that existing file preserved its original bytes until Save.
+
+Regression coverage also checks multiple YAML files, invalid YAML, nonrecursive
+discovery, case-insensitive YAML extensions, and ignoring `XDG_DATA_HOME` for the
+new default. Explicit project selection works even in an ambiguous directory.
+Both package formats pass metadata validation. Linux CI tests installation from
+the wheel and source archive on Python 3.10 and 3.12; see the commit's Actions run.
+
 ## Installable app — 0.8.1
 
 Local checks passed on macOS with Python 3.13: all 73 Python tests, 92 JavaScript

@@ -23,12 +23,23 @@ def run(executable):
         env = {k: v for k, v in os.environ.items() if k != 'PYTHONPATH'}
         env['XDG_DATA_HOME'] = str(work / 'default data')
         version = subprocess.check_output([executable, '--version'], cwd=work, env=env, text=True)
-        assert version.strip() == 'Research Flow 0.8.1', version
-        # Test both an explicit path (including spaces) and the default data path.
-        for explicit in (True, False):
-            project = work / 'my study' / 'workflow.yaml' if explicit else Path(env['XDG_DATA_HOME']) / 'research-flow/project.yaml'
-            args = ['--project', str(project), '--init'] if explicit else []
-            proc = subprocess.Popen([executable, *args, '--port', '0'], cwd=work, env=env,
+        assert version.strip() == 'Research Flow 0.8.2', version
+        for scenario in ('explicit', 'empty', 'existing'):
+            cwd = work / scenario
+            cwd.mkdir()
+            project = cwd / 'workflow.yaml'
+            args = []
+            if scenario == 'explicit':
+                project = cwd / 'my study' / 'workflow.yaml'
+                args = ['--project', str(project), '--init']
+                # An explicit path must bypass an otherwise ambiguous directory.
+                (cwd / 'a.yaml').write_text('unrelated configuration')
+                (cwd / 'b.yml').write_text('other configuration')
+            elif scenario == 'existing':
+                project = cwd / 'my-study.yml'
+                project.write_text('# Keep this comment until Save\nschema_version: 1\nproject:\n  name: Existing study\ntasks: []\ncustom: preserved\n')
+            original = project.read_bytes() if project.exists() else None
+            proc = subprocess.Popen([executable, *args, '--port', '0'], cwd=cwd, env=env,
                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             lines = queue.Queue()
             def consume():
@@ -67,6 +78,9 @@ def run(executable):
                 snapshot = json.loads(data)
                 assert Path(snapshot['file']) == project.resolve()
                 assert snapshot['document']['tasks'] == []
+                if original is not None:
+                    assert project.read_bytes() == original, 'Opening an existing workflow must not rewrite it'
+                    assert snapshot['document']['custom'] == 'preserved'
                 snapshot['document']['project']['name'] = 'Installed app saved this'
                 status, _ = request('PUT', '/api/project', snapshot)
                 assert status == 200
@@ -88,11 +102,13 @@ def run(executable):
             assert proc.returncode == 0, 'Server did not shut down cleanly'
             # Recover the same persistent credential without modifying the YAML.
             recovered = subprocess.check_output([executable, *args, '--port', str(parts.port), '--print-url'],
-                                                cwd=work, env=env, text=True)
+                                                cwd=cwd, env=env, text=True)
             assert recovered.strip() == url
             assert project.read_bytes() == saved
-            print('PASS installed app:', 'explicit project path' if explicit else 'default data path', flush=True)
-        assert not (work / 'project.yaml').exists(), 'Unexpected workflow in the working directory'
+            if scenario == 'existing':
+                assert not (cwd / 'workflow.yaml').exists(), 'Discovery must not create a second workflow'
+            print('PASS installed app:', scenario, flush=True)
+        assert not Path(env['XDG_DATA_HOME']).exists(), 'Default launch must use the current folder'
     print('ALL INSTALLED APP CHECKS PASSED', flush=True)
 
 

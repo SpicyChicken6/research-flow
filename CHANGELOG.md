@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.8.2 — use the current research folder
+
+- With no `--project`, open the only YAML/YML file in the current directory; create
+  `workflow.yaml` if none exists, and require an explicit choice if several exist.
+- Preserve existing YAML until Save and report invalid workflows without replacing
+  them. Explicit `--project` paths bypass discovery.
+- Keep the systemd template on an explicit data path and document migration from
+  the previous global default. Existing workflows are never moved or deleted.
+- Add regression and installed-app checks for discovery and saving in the launch
+  directory, including filenames with spaces and arbitrary workflow filenames.
+
 ## 0.8.1 — installable Linux/server app
 
 - Added a pipx-compatible Python distribution and `research-flow` command, with all

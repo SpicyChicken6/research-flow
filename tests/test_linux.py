@@ -39,13 +39,60 @@ class SetupTests(unittest.TestCase):
         self.assertFalse(initialize_project(path))
         self.assertEqual(path.read_bytes(), b'original bytes\nnot valid yaml')
 
-    def test_xdg_data_outside_checkout(self):
-        with patch.dict(os.environ, {'XDG_DATA_HOME': str(self.root)}):
-            self.assertEqual(default_project_path(), self.root / 'research-flow/project.yaml')
+    def test_empty_directory_defaults_to_workflow_without_creating_it(self):
+        with patch('server.Path.cwd', return_value=self.root):
+            self.assertEqual(default_project_path(), self.root / 'workflow.yaml')
+        self.assertEqual(list(self.root.iterdir()), [])
 
-    def test_relative_xdg_rejected(self):
-        with patch.dict(os.environ, {'XDG_DATA_HOME': 'relative'}):
-            with self.assertRaises(ValidationError): default_project_path()
+    def test_only_yaml_is_selected_regardless_of_name_or_extension(self):
+        for name in ('my-study.yaml', 'plan.yml', 'STUDY.YAML'):
+            with self.subTest(name=name):
+                path = self.root / name
+                path.write_text('original bytes')
+                with patch('server.Path.cwd', return_value=self.root):
+                    self.assertEqual(default_project_path(), path)
+                self.assertEqual(path.read_text(), 'original bytes')
+                path.unlink()
+
+    def test_discovery_is_not_recursive_and_ignores_other_files(self):
+        (self.root / 'nested').mkdir()
+        (self.root / 'nested/project.yaml').write_text('nested')
+        (self.root / 'config.json').write_text('{}')
+        (self.root / 'folder.yaml').mkdir()
+        with patch('server.Path.cwd', return_value=self.root):
+            self.assertEqual(default_project_path(), self.root / 'workflow.yaml')
+
+    def test_multiple_yaml_files_require_an_explicit_choice(self):
+        for name in ('workflow.yaml', 'other.yml'):
+            (self.root / name).write_text(name)
+        with patch('server.Path.cwd', return_value=self.root):
+            with self.assertRaisesRegex(ValidationError, 'Multiple YAML.*--project'):
+                default_project_path()
+        self.assertEqual((self.root / 'workflow.yaml').read_text(), 'workflow.yaml')
+
+    def test_xdg_does_not_override_current_directory(self):
+        with patch.dict(os.environ, {'XDG_DATA_HOME': 'irrelevant'}), patch('server.Path.cwd', return_value=self.root):
+            self.assertEqual(default_project_path(), self.root / 'workflow.yaml')
+
+    def test_cli_ambiguous_directory_does_not_create_or_modify_files(self):
+        for name in ('a.yaml', 'b.yml'):
+            initialize_project(self.root / name)
+        before = {p.name: p.read_bytes() for p in self.root.iterdir()}
+        result = subprocess.run([sys.executable, str(ROOT / 'server.py')], cwd=self.root,
+                                capture_output=True, text=True, timeout=10)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('--project', result.stderr)
+        self.assertEqual({p.name: p.read_bytes() for p in self.root.iterdir()}, before)
+
+    def test_cli_invalid_discovered_yaml_is_not_replaced_or_ignored(self):
+        path = self.root / 'study.yml'
+        path.write_text('not a research workflow')
+        result = subprocess.run([sys.executable, str(ROOT / 'server.py')], cwd=self.root,
+                                capture_output=True, text=True, timeout=10)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('schema_version', result.stderr)
+        self.assertEqual(path.read_text(), 'not a research workflow')
+        self.assertEqual(list(self.root.iterdir()), [path])
 
     def test_token_is_stable_private_and_random(self):
         path = default_token_path(self.root / 'project.yaml')
