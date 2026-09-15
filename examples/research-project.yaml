@@ -1,0 +1,111 @@
+schema_version: 1
+project:
+  id: research-project
+  name: From question to discovery
+  description: An example project. Dotted branches show parts; arrows show dependencies.
+tasks:
+- id: question
+  title: Define the study
+  status: done
+  goal: Set the question and success criteria.
+  outputs:
+  - notes/study-design.md
+  notes: ''
+  depends_on: []
+  inputs: []
+- id: analysis
+  title: Analyze the data
+  status: in_progress
+  goal: Build a reproducible analysis.
+  depends_on:
+  - question
+  agent_instructions: Follow the agreed design; ask before changing statistical assumptions.
+  notes: ''
+  inputs: []
+  outputs: []
+- id: synthesis
+  title: Share the findings
+  status: todo
+  goal: Create a clear and supported story.
+  depends_on:
+  - analysis
+  outputs:
+  - manuscript/results.md
+  notes: ''
+  inputs: []
+- id: preparation
+  title: Prepare the dataset
+  status: in_progress
+  goal: Make the inputs reliable.
+  parent_id: analysis
+  notes: ''
+  depends_on: []
+  inputs: []
+  outputs: []
+- id: model
+  title: Fit the model
+  status: todo
+  goal: Estimate the planned comparisons.
+  parent_id: analysis
+  depends_on:
+  - preparation
+  outputs:
+  - results/model.tsv
+  notes: ''
+  inputs: []
+- id: metadata
+  title: Check sample metadata
+  status: done
+  goal: Resolve labels and missing values.
+  parent_id: preparation
+  notes: Fictional example data. Record assumptions and sources.
+  inputs:
+  - data/samples.tsv
+  depends_on: []
+  outputs: []
+- id: batches
+  title: Inspect batch effects
+  status: in_progress
+  goal: Check technical variation.
+  parent_id: preparation
+  depends_on:
+  - metadata
+  notes: ''
+  inputs: []
+  outputs: []
+- id: sensitivity
+  title: Test sensitivity
+  status: todo
+  goal: Challenge key assumptions.
+  parent_id: model
+  inputs:
+  - results/model.tsv
+  notes: ''
+  depends_on: []
+  outputs: []
+layout:
+  positions:
+    question:
+      x: 0
+      y: 0
+    analysis:
+      x: 606
+      y: 0
+    preparation:
+      x: 490
+      y: 234
+    metadata:
+      x: 360
+      y: 456
+    batches:
+      x: 620
+      y: 456
+    model:
+      x: 880
+      y: 234
+    sensitivity:
+      x: 880
+      y: 456
+    synthesis:
+      x: 1212
+      y: 0

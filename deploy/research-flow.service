@@ -1,0 +1,16 @@
+# Optional USER service. Install only after setting up the environment.
+# Adjust paths before installing when the application is elsewhere.
+[Unit]
+Description=Research Flow private workflow editor
+
+[Service]
+Type=simple
+WorkingDirectory=%h/apps/research-flow
+ExecStart=%h/apps/research-flow/.venv/bin/python %h/apps/research-flow/server.py
+Restart=on-failure
+RestartSec=3
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,213 @@
+# Research Flow
+
+One project. A clear, editable workflow.
+
+A small browser-based planner for a single research project. Run the Python server
+on your Linux machine, reach it through an SSH tunnel, and edit the workflow in your
+own browser. The project is a human-readable YAML file, not an application database.
+
+![Research Flow](docs/screenshot.png)
+
+## What stays in the interface
+
+- Place a blank step immediately, then click it to edit.
+- Drag and connect steps. Edit, reverse or remove dependency arrows.
+- Add smaller child cards, nest branches, collapse them, and move a whole branch.
+- Focus a branch or return to Overview. Use the global minimap to navigate.
+- Edit goals, status, notes and input/output references. Undo and redo changes.
+- Save explicitly, with revision-conflict protection and previous-version backups.
+
+No project library, dashboards, upcoming-step suggestions, AI execution, or account
+service. Original logos, the restrained animation, and the latest thin rectangular
+title divider are preserved.
+
+## Run on a remote Linux server
+
+Requires **Python 3.10+**, `venv`, and PyYAML. Git is needed for source control; Node
+and Playwright are only needed to run development tests. No frontend build is needed.
+
+In the downloaded source folder on the server:
+
+```bash
+bash start.sh
+```
+
+On its first run, the launcher creates `.venv` and installs the one runtime
+dependency. The server creates a blank workflow at:
+
+```text
+~/.local/share/research-flow/project.yaml
+```
+
+`XDG_DATA_HOME` is respected. Application updates do not touch this directory.
+To continue an **existing** workflow instead:
+
+```bash
+bash start.sh --project /absolute/path/to/your/project.yaml
+```
+
+An explicit missing path is not silently created: use `--init` to initialize it.
+`--init` never overwrites an existing file.
+
+On your **own computer**, open a second terminal:
+
+```bash
+ssh -N -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 \
+  -L 127.0.0.1:8765:127.0.0.1:8765 YOUR_USER@YOUR_SERVER
+```
+
+Leave both terminals running. In your browser, open the **private access URL printed
+by the server**, which begins with `http://127.0.0.1:8765/#token=…`.
+Do not share that URL. No server-side desktop or browser is needed.
+
+The token is moved out of the address bar and retained in that browser tab's session
+storage. Each API read/write requires it. Saving writes to the server-side YAML;
+it does not download a replacement HTML in server mode.
+
+For an already running instance, recover its private URL with:
+
+```bash
+bash start.sh --print-url
+# For an existing custom workflow, include the same --project used to launch it.
+```
+
+The saved token survives restarts. A different browser tab may need the private URL
+again. [Remote Linux guide](docs/linux.md) covers alternate ports, an optional user
+service, stopping/updating, backups, and troubleshooting.
+
+## Security boundary
+
+The server binds only to **127.0.0.1**. It rejects unexpected Host/Origin headers and
+requires a private token for project API access. It serves only an explicit list of
+web assets, not arbitrary files from the project directory.
+
+**Use SSH forwarding. Do not expose this directly to the internet or use it as a
+multi-user service.** It still uses Python's lightweight `http.server`, not a
+hardened production application server. An access token is not a replacement for
+TLS, user authorization, or operating-system isolation. Other people with your
+server account, root access, or your browser session can access your work.
+See [SECURITY.md](SECURITY.md).
+
+## Existing installations
+
+Stop the previous server, unpack this release into a fresh application directory,
+and point it at your existing YAML using `--project`. Keep the previous file and its
+`.research-flow` backups. Older checklist-style substeps continue to migrate to child
+cards when loaded; a read does not rewrite your file. The next explicit Save writes
+the normalized structure and keeps the preceding bytes in a backup.
+
+The default location changed in 0.8.0. A `project.yaml` left inside the code checkout
+is **not** selected automatically. Use `--project` to continue it.
+
+## Data model
+
+```yaml
+schema_version: 1
+project:
+  id: my-project
+  name: My research project
+tasks:
+  - id: analysis
+    title: Analyze the dataset
+    status: todo
+    depends_on: []
+  - id: qc
+    title: Audit quality
+    parent_id: analysis
+    status: todo
+    depends_on: []
+  - id: model
+    title: Fit the model
+    parent_id: analysis
+    status: todo
+    depends_on: [qc]
+layout:
+  positions: {}
+```
+
+`parent_id` means “belongs to”; `depends_on` means “requires.” They are distinct.
+When you connect an ungrouped step to a child, the UI can adopt it into that child's
+branch when unambiguous. It does not regroup old projects on load. Each task has
+one optional parent and multiple possible prerequisites. Both cycles are rejected.
+Names and positions can change without changing stable IDs.
+
+A single process should serve each workflow file. Saves are atomic replacements
+with optimistic revision checks, not database transactions with unrelated editors.
+The latest 20 file backups are retained under `.research-flow/backups/<filename>/`
+next to the project. YAML comments/formatting are normalized on save. File references
+are text; the app does not execute programs or automatically upload referenced files.
+
+## Portable HTML (optional)
+
+```bash
+.venv/bin/python scripts/build_preview.py
+```
+
+This creates `dist/research-flow.html` with fictional example data. Open it without
+a server and use **Save copy** to download an editable HTML containing your changes.
+The builder does not alter tracked source. To export a specific project:
+
+```bash
+.venv/bin/python scripts/build_preview.py \
+  --project /absolute/path/to/project.yaml --output /tmp/my-workflow.html
+```
+
+Exports can contain private research notes. They are ignored by Git and should not
+be committed to the application repository. Tokens are not part of project data.
+
+## Development
+
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements-dev.txt
+.venv/bin/python -m unittest discover -s tests -p 'test_*.py' -v
+node --test tests/test_*.mjs
+.venv/bin/python scripts/build_preview.py
+.venv/bin/python -m playwright install chromium
+.venv/bin/python tests/essential_checks.py
+.venv/bin/python tests/logo_motion_checks.py
+.venv/bin/python tests/children_checks.py
+.venv/bin/python tests/branch_update_checks.py
+.venv/bin/python tests/linux_browser_checks.py
+```
+
+No `npm install` is required. The browser suites use disposable data, generate
+ignored reports in `test-results/`, and require Chromium. On a minimal server,
+Playwright's `install --with-deps chromium` may need administrator permission for
+system libraries. CI configuration is included; a successful local run does not
+mean CI has run on GitHub. In restricted environments, `tests/transport_checks.py`
+provides an explicitly simulated-browser transport check against the real HTTP API;
+it is not a substitute for the direct browser test. See [testing notes](docs/testing.md).
+
+## Publish this bundle to GitHub
+
+With Git and GitHub CLI installed and authenticated as `SpicyChicken6`:
+
+```bash
+gh auth login --hostname github.com
+python3 scripts/publish_github.py
+```
+
+The script creates **a new private `SpicyChicken6/research-flow` repository**. It
+initializes Git when needed, stages only the reviewed `.release-files` manifest,
+pushes the source, and verifies the remote commit. It refuses to replace an existing
+remote or force-push. It does not upload your default workflow, backups, tokens,
+virtual environment, generated exports, or test output. Review the source before
+publishing. For an intentionally different name use `--repo NAME`.
+
+## Source layout
+
+```text
+web/          Interface, SVG artwork, graph model and animation
+server.py     Validation, persistence, loopback HTTP and private access
+scripts/      Launcher helpers, validation, standalone build and publishing
+examples/     Fictional example and blank starting template
+tests/        Model, persistence, interface and Linux regression tests
+deploy/       Optional systemd user-service template
+docs/         Deployment and testing notes
+```
+
+The project-title font is resolved on the **client browser**, not the Linux server.
+Avenir uses a locally installed face with a bold treatment; a fallback is used when
+unavailable. No font files or external font requests are included. No open-source
+license has been selected for this source bundle.

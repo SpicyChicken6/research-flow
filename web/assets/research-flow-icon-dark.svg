@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Research Flow — dark app icon</title>
+  <desc id="desc">Research Flow dotted circular emblem with a clean upper-right pointer, without the inner tail. Native editable vector circles and a pointer path; no raster image, font, or external resource.</desc>
+  <rect id="background" x="1" y="1" width="510" height="510" rx="104" fill="#0B1220"/>
+  <g id="emblem" transform="translate(-114.63557 -9.58467) scale(0.9532878)">
+    <g id="dots">
+      <circle id="dot-01" cx="389.8915" cy="92.7286" r="11.8317" fill="#F8FAFC"/>
+      <circle id="dot-02" cx="320.7015" cy="105.1162" r="11.4198" fill="#F8FAFC"/>
+      <circle id="dot-03" cx="430.0372" cy="112.8352" r="12.6000" fill="#3D8BFC"/>
+      <circle id="dot-04" cx="354.3295" cy="115.1896" r="11.9209" fill="#F8FAFC"/>
+      <circle id="dot-05" cx="472.6797" cy="123.9375" r="13.3837" fill="#3D8BFD"/>
+      <circle id="dot-06" cx="390.5583" cy="130.0285" r="9.8324" fill="#3887EE"/>
+      <circle id="dot-07" cx="266.1219" cy="134.1056" r="10.3322" fill="#F8FAFC"/>
+      <circle id="dot-08" cx="300.5000" cy="134.4420" r="11.0504" fill="#F8FAFC"/>
+      <circle id="dot-09" cx="335.3722" cy="144.3722" r="9.0794" fill="#F8FAFC"/>
+      <circle id="dot-10" cx="442.8613" cy="145.8289" r="7.6876" fill="#4A98FD"/>
+      <circle id="dot-11" cx="416.4948" cy="154.4233" r="6.0861" fill="#5BA2FC"/>
+      <circle id="dot-12" cx="363.4560" cy="155.9570" r="6.7710" fill="#367FDA"/>
+      <circle id="dot-13" cx="261.8509" cy="169.9653" r="10.6236" fill="#F8FAFC"/>
+      <circle id="dot-14" cx="294.5748" cy="168.4252" r="8.1163" fill="#F8FAFC"/>
+      <circle id="dot-15" cx="391.4338" cy="166.6614" r="4.7657" fill="#4191FC"/>
+      <circle id="dot-16" cx="227.8889" cy="176.5426" r="11.8223" fill="#F8FAFC"/>
+      <circle id="dot-17" cx="325.1798" cy="174.1798" r="5.9567" fill="#F8FAFC"/>
+      <circle id="dot-18" cx="480.6739" cy="199.7226" r="7.1024" fill="#6CADFC"/>
+      <circle id="dot-19" cx="264.8675" cy="205.5983" r="8.6622" fill="#F8FAFC"/>
+      <circle id="dot-20" cx="295.0499" cy="201.6108" r="6.2598" fill="#F8FAFC"/>
+      <circle id="dot-21" cx="556.2238" cy="215.4767" r="14.3551" fill="#4392FD"/>
+      <circle id="dot-22" cx="231.4119" cy="215.0120" r="11.2257" fill="#F8FAFC"/>
+      <circle id="dot-23" cx="202.3963" cy="230.9423" r="10.5315" fill="#F8FAFC"/>
+      <circle id="dot-24" cx="270.7135" cy="236.4705" r="6.2098" fill="#F8FAFC"/>
+      <circle id="dot-25" cx="510.8053" cy="238.0000" r="6.3760" fill="#56A1FD"/>
+      <circle id="dot-26" cx="541.4890" cy="250.0364" r="9.1925" fill="#6CAFFD"/>
+      <circle id="dot-27" cx="243.6270" cy="250.4796" r="9.0169" fill="#F8FAFC"/>
+      <circle id="dot-28" cx="577.5321" cy="269.3697" r="14.7712" fill="#4191FE"/>
+      <circle id="dot-29" cx="218.2675" cy="271.3412" r="12.0201" fill="#F8FAFC"/>
+      <circle id="dot-30" cx="522.4151" cy="276.0000" r="7.0414" fill="#5EA6FD"/>
+      <circle id="dot-31" cx="262.7520" cy="276.6282" r="6.3030" fill="#F8FAFC"/>
+      <circle id="dot-32" cx="197.6115" cy="299.5496" r="12.3206" fill="#F8FAFC"/>
+      <circle id="dot-33" cx="547.9558" cy="298.7058" r="10.5915" fill="#55A0FE"/>
+      <circle id="dot-34" cx="242.5600" cy="301.7583" r="8.7514" fill="#F8FAFC"/>
+      <circle id="dot-35" cx="519.3089" cy="317.9341" r="7.6406" fill="#4896FD"/>
+      <circle id="dot-36" cx="270.1672" cy="317.9135" r="5.3505" fill="#F8FAFC"/>
+      <circle id="dot-37" cx="225.1175" cy="331.7432" r="12.2993" fill="#F8FAFC"/>
+      <circle id="dot-38" cx="569.0093" cy="334.5657" r="14.7275" fill="#408FFE"/>
+      <circle id="dot-39" cx="497.6405" cy="338.1018" r="4.5637" fill="#569EFD"/>
+      <circle id="dot-40" cx="262.7479" cy="346.4371" r="7.7943" fill="#F8FAFC"/>
+      <circle id="dot-41" cx="534.5105" cy="351.9711" r="10.7220" fill="#509BFE"/>
+      <circle id="dot-42" cx="293.5000" cy="354.3666" r="4.8030" fill="#3273C8"/>
+      <circle id="dot-43" cx="216.7150" cy="364.6287" r="12.9082" fill="#F8FAFC"/>
+      <circle id="dot-44" cx="506.8829" cy="364.3178" r="8.0635" fill="#559FFD"/>
+      <circle id="dot-45" cx="478.4246" cy="370.3504" r="6.0300" fill="#418FFC"/>
+      <circle id="dot-46" cx="256.6609" cy="379.0016" r="11.3033" fill="#F8FAFC"/>
+      <circle id="dot-47" cx="292.9040" cy="383.6482" r="7.2008" fill="#377BCF"/>
+      <circle id="dot-48" cx="326.4378" cy="381.1370" r="4.7195" fill="#357CD6"/>
+      <circle id="dot-49" cx="544.0757" cy="389.8537" r="12.5455" fill="#418FFD"/>
+      <circle id="dot-50" cx="419.4251" cy="396.4251" r="5.9291" fill="#418FFB"/>
+      <circle id="dot-51" cx="510.4225" cy="402.3095" r="11.8450" fill="#3E8EFD"/>
+      <circle id="dot-52" cx="365.9375" cy="396.1531" r="4.6192" fill="#4492FA"/>
+      <circle id="dot-53" cx="448.0026" cy="400.9556" r="7.6534" fill="#3E8EFC"/>
+      <circle id="dot-54" cx="479.3196" cy="404.1445" r="8.6871" fill="#4493FD"/>
+      <circle id="dot-55" cx="253.2528" cy="413.5203" r="14.3238" fill="#F8FAFC"/>
+      <circle id="dot-56" cx="336.2920" cy="407.3532" r="7.0988" fill="#3788F1"/>
+      <circle id="dot-57" cx="297.4762" cy="412.5649" r="10.7823" fill="#347DDA"/>
+      <circle id="dot-58" cx="388.4186" cy="414.3638" r="7.0129" fill="#4290FB"/>
+      <circle id="dot-59" cx="410.6520" cy="427.6082" r="9.0948" fill="#4390FB"/>
+      <circle id="dot-60" cx="351.9453" cy="433.3780" r="11.1796" fill="#3583E9"/>
+      <circle id="dot-61" cx="437.7106" cy="440.0593" r="13.0426" fill="#3D8BFC"/>
+      <circle id="dot-62" cx="479.8307" cy="442.3497" r="14.4557" fill="#3D8CFD"/>
+      <circle id="dot-63" cx="306.3123" cy="443.9912" r="13.4698" fill="#F8FAFC"/>
+      <circle id="dot-64" cx="374.2546" cy="461.4352" r="14.8652" fill="#3681E0"/>
+    </g>
+    <path id="pointer" d="M 535.5 143.2 C 540.1 141.5 543.3 144.6 541.7 149.2 L 522.5 203.3 C 520.4 209.5 515.6 211.0 512.2 204.6 L 501.4 183.4 L 481.1 168.0 C 477.7 165.4 478.0 162.3 482.7 160.8 Z" fill="#F8FAFC"/>
+  </g>
+</svg>

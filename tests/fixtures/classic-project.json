@@ -1,0 +1,176 @@
+{
+  "schema_version": 1,
+  "project": {
+    "id": "research-project",
+    "name": "From question to discovery",
+    "description": "A sample research plan. Replace these steps with your own project."
+  },
+  "tasks": [
+    {
+      "id": "question",
+      "title": "Define the research question",
+      "status": "done",
+      "goal": "State the question, the comparison, and what evidence would answer it.",
+      "depends_on": [],
+      "inputs": [],
+      "outputs": [
+        "notes/research-question.md"
+      ],
+      "notes": "Keep the first version small enough to finish. This is fictional example data."
+    },
+    {
+      "id": "literature",
+      "title": "Map the literature",
+      "status": "done",
+      "goal": "Summarize supporting evidence, competing explanations, and knowledge gaps.",
+      "depends_on": [
+        "question"
+      ],
+      "inputs": [
+        "notes/research-question.md"
+      ],
+      "outputs": [
+        "notes/evidence-map.md"
+      ],
+      "notes": "Record sources and uncertainty, not just conclusions."
+    },
+    {
+      "id": "data_qc",
+      "title": "Audit data & quality",
+      "status": "in_progress",
+      "goal": "Check sample metadata, missingness, technical quality, and potential confounders.",
+      "depends_on": [
+        "question"
+      ],
+      "inputs": [
+        "data/sample-metadata.tsv"
+      ],
+      "outputs": [
+        "reports/qc.html"
+      ],
+      "notes": "Separate biological replicates from technical replicates before analysis."
+    },
+    {
+      "id": "design",
+      "title": "Finalize the analysis plan",
+      "status": "todo",
+      "goal": "Specify comparisons, controls, sensitivity checks, and expected outputs.",
+      "depends_on": [
+        "literature",
+        "data_qc"
+      ],
+      "inputs": [
+        "notes/evidence-map.md",
+        "reports/qc.html"
+      ],
+      "outputs": [
+        "notes/analysis-plan.md"
+      ],
+      "notes": "Define success before running the primary analysis."
+    },
+    {
+      "id": "analysis",
+      "title": "Run the primary analysis",
+      "status": "todo",
+      "goal": "Implement the agreed analysis in a reproducible script or notebook.",
+      "depends_on": [
+        "design"
+      ],
+      "inputs": [
+        "notes/analysis-plan.md"
+      ],
+      "outputs": [
+        "analysis/main.py",
+        "results/primary-results.tsv"
+      ],
+      "notes": "Record environment, parameters, and input versions.",
+      "agent_instructions": "Implement only the agreed analysis. Save code and a short execution report. Ask before changing the statistical design."
+    },
+    {
+      "id": "validation",
+      "title": "Validate & stress-test",
+      "status": "todo",
+      "goal": "Check alternative assumptions and confirm that results are not driven by one sample or batch.",
+      "depends_on": [
+        "analysis"
+      ],
+      "inputs": [
+        "results/primary-results.tsv"
+      ],
+      "outputs": [
+        "reports/validation.md"
+      ],
+      "notes": "A completed task is not automatically a verified scientific conclusion."
+    },
+    {
+      "id": "figures",
+      "title": "Build the figure story",
+      "status": "todo",
+      "goal": "Create figures with a clear question, result, and limitation for each panel.",
+      "depends_on": [
+        "analysis"
+      ],
+      "inputs": [
+        "results/primary-results.tsv"
+      ],
+      "outputs": [
+        "figures/"
+      ],
+      "notes": "Keep a record of how each figure was generated."
+    },
+    {
+      "id": "synthesis",
+      "title": "Synthesize & write",
+      "status": "todo",
+      "goal": "Connect the results to the question and document unresolved limitations.",
+      "depends_on": [
+        "validation",
+        "figures"
+      ],
+      "inputs": [
+        "reports/validation.md",
+        "figures/"
+      ],
+      "outputs": [
+        "manuscript/results.md"
+      ],
+      "notes": "Distinguish observations, interpretation, and hypotheses."
+    }
+  ],
+  "layout": {
+    "positions": {
+      "question": {
+        "x": 0,
+        "y": 109
+      },
+      "literature": {
+        "x": 316,
+        "y": 0
+      },
+      "data_qc": {
+        "x": 316,
+        "y": 218
+      },
+      "design": {
+        "x": 632,
+        "y": 109
+      },
+      "analysis": {
+        "x": 948,
+        "y": 109
+      },
+      "validation": {
+        "x": 1264,
+        "y": 0
+      },
+      "figures": {
+        "x": 1264,
+        "y": 218
+      },
+      "synthesis": {
+        "x": 1580,
+        "y": 109
+      }
+    }
+  }
+}

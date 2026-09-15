@@ -1,0 +1,34 @@
+# Workflows, backups and credentials are user data, not application source.
+/project.yaml
+/project.yml
+/project.json
+/data/
+/projects/
+.research-flow/
+*.token
+.env
+.env.*
+*.pem
+*.key
+
+# Dependencies, generated exports and test artifacts
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+node_modules/
+dist/
+test-results/
+playwright-report/
+*.log
+*.zip
+*.tar.gz
+.DS_Store
+
+# Fonts are deliberately not distributed.
+*.ttf
+*.otf
+*.ttc
+*.woff
+*.woff2
