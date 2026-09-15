@@ -17,7 +17,9 @@
 - `make_handler(..., auth_token=None)` is solely for controlled in-process tests.
   Never use that setting in a user-facing entrypoint.
 - Test Python and JS units plus browser interactions. Keep the snapshot builder pure.
-  New files intended for the first-publish bundle must be added to `.release-files`.
+  See `docs/testing.md` for commands; browser suites live in `tests/browser/`.
+- Declare dependencies in `pyproject.toml`. Keep installed web assets explicitly
+  listed there; maintain source-distribution contents in `MANIFEST.in`.
 - The title divider is rectangular: 2px desktop, 1px <=700px, existing close spacing.
   The requested project-title font comes from the client's local installation.
 - Do not select an open-source license without the owner's approval.

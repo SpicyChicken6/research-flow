@@ -172,13 +172,6 @@ export function removeTask(project, id) {
   delete next.layout.positions[id];
   return next;
 }
-export function readyTasks(project) {
-  const done = new Set(project.tasks.filter(t => t.status === 'done').map(t => t.id));
-  return project.tasks.filter(t => t.status === 'todo' && t.depends_on.every(id => done.has(id)));
-}
-export function waitingOn(project, task) {
-  return project.tasks.filter(t => task.depends_on.includes(t.id) && t.status !== 'done');
-}
 export function autoLayout(project) {
   if (project.tasks.some(t => t.parent_id)) return layoutHierarchy(project);
   const next = clone(project), byId = new Map(next.tasks.map(t => [t.id, t])), levels = new Map();

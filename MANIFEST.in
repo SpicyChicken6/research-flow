@@ -1,5 +1,5 @@
-include .editorconfig .gitattributes .gitignore .release-files AGENTS.md
-include CHANGELOG.md SECURITY.md start.sh package.json requirements*.txt
+include .editorconfig .gitattributes .gitignore AGENTS.md
+include CHANGELOG.md SECURITY.md start.sh package.json
 include .github/workflows/test.yml
 recursive-include deploy *.service
 recursive-include docs *.md *.png

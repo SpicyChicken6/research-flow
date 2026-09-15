@@ -5,7 +5,7 @@ from tempfile import TemporaryDirectory
 from http.server import ThreadingHTTPServer
 import json,re,sys,threading,http.client,os,shutil
 from playwright.sync_api import sync_playwright, expect
-ROOT=Path(__file__).resolve().parents[1];sys.path.insert(0,str(ROOT))
+ROOT=Path(__file__).resolve().parents[2];sys.path.insert(0,str(ROOT))
 from server import parse_project,ProjectStore,make_handler
 OUT=ROOT/'test-results';OUT.mkdir(exist_ok=True)
 HTML=(ROOT/'dist/research-flow.html').read_text()

@@ -13,6 +13,6 @@ if [[ ! -x "$VENV/bin/python" ]]; then
   }
 fi
 if ! "$VENV/bin/python" -c 'import yaml; assert (6, 0, 2) <= tuple(map(int, yaml.__version__.split("."))) < (7,)' 2>/dev/null; then
-  "$VENV/bin/python" -m pip install -r "$ROOT/requirements.txt"
+  "$VENV/bin/python" -m pip install "$ROOT"
 fi
 exec "$VENV/bin/python" "$ROOT/server.py" "$@"

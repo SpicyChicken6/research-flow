@@ -41,7 +41,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: python -m pip install -r requirements.txt
+      - run: python -m pip install .
       - run: python -m unittest discover -s tests -p 'test_*.py' -v
       - run: node --test tests/test_*.mjs
   browser:
@@ -51,11 +51,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: python -m pip install -r requirements-dev.txt
+      - run: python -m pip install ".[test]"
       - run: python scripts/build_preview.py
       - run: python -m playwright install --with-deps chromium
-      - run: python tests/essential_checks.py
-      - run: python tests/logo_motion_checks.py
-      - run: python tests/children_checks.py
-      - run: python tests/branch_update_checks.py
-      - run: python tests/linux_browser_checks.py
+      - run: python tests/browser/essential_checks.py
+      - run: python tests/browser/logo_motion_checks.py
+      - run: python tests/browser/children_checks.py
+      - run: python tests/browser/branch_update_checks.py
+      - run: python tests/browser/linux_browser_checks.py

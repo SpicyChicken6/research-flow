@@ -34,7 +34,7 @@ compatibility. The one runtime dependency is PyYAML. On managed systems, use a
 Python environment approved by your administrator instead of changing system Python:
 
 ```bash
-python -m pip install -r requirements.txt
+python -m pip install .
 python server.py --project /absolute/path/to/project.yaml
 ```
 
@@ -117,7 +117,7 @@ After publishing the repository, normal updates are:
 
 ```bash
 git pull --ff-only
-.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python -m pip install .
 systemctl --user restart research-flow
 ```
 

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { validateProject, addDependency, removeTask, readyTasks, waitingOn, autoLayout, toYaml } from '../web/model.mjs';
+import { validateProject, addDependency, removeTask, autoLayout, toYaml } from '../web/model.mjs';
 const fresh = () => validateProject({ schema_version: 1, project: { name: 'Demo' }, tasks: [
   { id: 'a', title: 'A', status: 'done' }, { id: 'b', title: 'B', depends_on: ['a'] }, { id: 'c', title: 'C' }
 ] });
@@ -14,9 +14,6 @@ test('duplicate ids rejected', () => { const x = fresh(); x.tasks[2].id = 'a'; a
 test('duplicate dependencies rejected', () => { const x = fresh(); x.tasks[1].depends_on.push('a'); assert.throws(() => validateProject(x), /Duplicate/); });
 test('adding the same edge is idempotent', () => assert.deepEqual(addDependency(fresh(), 'a', 'b'), fresh()));
 test('remove task removes incident edges but retains descendants', () => { const x = removeTask(fresh(), 'a'); assert.equal(x.tasks.length, 2); assert.deepEqual(x.tasks[0].depends_on, []); });
-test('readiness is computed, not a stored status', () => assert.deepEqual(readyTasks(fresh()).map(t => t.id), ['b', 'c']));
-test('manually blocked tasks are not ready', () => { const x = fresh(); x.tasks[2].status = 'blocked'; assert.deepEqual(readyTasks(x).map(t => t.id), ['b']); });
-test('waiting-on respects unfinished dependencies', () => { const x = fresh(); x.tasks[0].status = 'todo'; assert.equal(waitingOn(x, x.tasks[1]).length, 1); });
 test('auto layout puts dependencies before descendants', () => { const x = autoLayout(fresh()); assert.ok(x.layout.positions.a.x < x.layout.positions.b.x); assert.equal(x.layout.positions.a.x, x.layout.positions.c.x); });
 test('empty project layout remains valid', () => { const x = fresh(); x.tasks = []; assert.deepEqual(autoLayout(x).tasks, []); });
 test('invalid status and empty string rejected', () => { for (const v of ['finished', '']) { const x = fresh(); x.tasks[0].status = v; assert.throws(() => validateProject(x), /status/); } });

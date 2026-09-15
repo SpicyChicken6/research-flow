@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased — repository cleanup
+
+- Removed one-time publishing helpers, their manifest, the unused validation
+  wrapper and blank example, and the superseded simulated transport harness.
+- Removed unused task-suggestion helpers and their tests; kept workflow editing,
+  validation, persistence, installation, migration, and browser regression coverage.
+- Grouped browser checks under `tests/browser/`, consolidated dependencies in
+  `pyproject.toml`, and replaced historical test reports with current instructions.
+
 ## 0.8.2 — use the current research folder
 
 - With no `--project`, open the only YAML/YML file in the current directory; create

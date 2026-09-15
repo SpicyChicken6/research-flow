@@ -4,7 +4,7 @@ import io, json, re, shutil, xml.etree.ElementTree as ET
 from pathlib import Path
 from PIL import Image, ImageChops
 from playwright.sync_api import sync_playwright, expect
-ROOT=Path(__file__).resolve().parents[1]
+ROOT=Path(__file__).resolve().parents[2]
 HTML=(ROOT/'dist/research-flow.html').read_text()
 CLASSIC=json.loads((ROOT/'tests/fixtures/classic-project.json').read_text())
 HTML=re.sub(r'(<script id="initial-project" type="application/json">).*?(</script>)',lambda m:m[1]+json.dumps(CLASSIC)+m[2],HTML,flags=re.S)

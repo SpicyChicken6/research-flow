@@ -34,8 +34,7 @@ https://docs.python.org/3/library/http.server.html
 
 Project files, file paths, notes and portable exports may contain confidential data.
 Keep them outside the source checkout. `.gitignore` is a convenience, not a complete
-secret detector. The publisher stages only the reviewed release manifest, but code
-changes must still be reviewed before publishing. Never force-add data or keys.
+secret detector. Review staged files before publishing. Never force-add data or keys.
 Backups share the same confidentiality as the original project. The app does not
 upload referenced files, execute commands in nodes, or send analytics.
 

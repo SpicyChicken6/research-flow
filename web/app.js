@@ -276,7 +276,6 @@ function edgeGeometry(source,target) {
   const curve=Math.max(55,Math.abs(tx-sx)*.5);
   return {d:`M ${sx} ${sy} C ${sx+curve} ${sy}, ${tx-curve} ${ty}, ${tx} ${ty}`, x:(sx+tx)/2,y:(sy+ty)/2};
 }
-function edgePath(source,target) {return edgeGeometry(source,target).d;}
 function hierarchyPath(parent,child) {
   const a=positionOf(parent),b=positionOf(child);
   const pa=taskSize(project.tasks.find(t=>t.id===parent)),ch=taskSize(project.tasks.find(t=>t.id===child));
@@ -424,7 +423,6 @@ function renderInspector() {
     return;
   }
   if (!task) { container.innerHTML=''; container.hidden=true; return; }
-  const i=project.tasks.indexOf(task);
   const candidates=project.tasks.filter(t=>t.id!==task.id && !task.depends_on.includes(t.id)).filter(t=>{ try{addDependency(project,t.id,task.id);return true;}catch{return false;} });
   const downstream=project.tasks.filter(t=>t.depends_on.includes(task.id));
   container.innerHTML=`${heading('Step details')}<div class="inspector-content"><div class="id-line">${task.parent_id?'CHILD STEP':'MAIN STEP'}</div><textarea class="title-input" rows="2" data-field="title" aria-label="Step title" placeholder="Name this step…" maxlength="200">${task.title==='Untitled step'?'':esc(task.title)}</textarea>

@@ -5,7 +5,7 @@ from tempfile import TemporaryDirectory
 from http.server import ThreadingHTTPServer
 import json, os, re, shutil, sys, threading, time, http.client
 from playwright.sync_api import sync_playwright, expect
-ROOT=Path(__file__).resolve().parents[1]
+ROOT=Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT))
 from server import ProjectStore,make_handler,parse_project
 OUT=ROOT/'test-results';OUT.mkdir(exist_ok=True)
