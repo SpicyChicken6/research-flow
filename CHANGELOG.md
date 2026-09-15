@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased — repository cleanup
+## 0.8.3 — repository and setup cleanup
 
 - Removed one-time publishing helpers, their manifest, the unused validation
   wrapper and blank example, and the superseded simulated transport harness.
@@ -8,6 +8,10 @@
   validation, persistence, installation, migration, and browser regression coverage.
 - Grouped browser checks under `tests/browser/`, consolidated dependencies in
   `pyproject.toml`, and replaced historical test reports with current instructions.
+
+- Simplified the README and updated the tagline to “from action to completion.”
+- Made VS Code integrated browser remote access the main remote setup, with
+  manual forwarding documented as an optional alternative.
 
 ## 0.8.2 — use the current research folder
 

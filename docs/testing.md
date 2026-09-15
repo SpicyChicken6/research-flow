@@ -51,7 +51,7 @@ Install a newly built wheel in a separate environment and check it:
 
 ```bash
 python3 -m venv /tmp/research-flow-check
-/tmp/research-flow-check/bin/python -m pip install dist/research_flow-0.8.2-py3-none-any.whl
+/tmp/research-flow-check/bin/python -m pip install dist/research_flow-0.8.3-py3-none-any.whl
 .venv/bin/python tests/installed_checks.py /tmp/research-flow-check/bin/research-flow
 ```
 

@@ -22,7 +22,7 @@ own machine or Linux server.
 Requires **Python 3.10+** and [pipx](https://pipx.pypa.io/stable/installation/).
 
 ```bash
-pipx install https://github.com/SpicyChicken6/research-flow/releases/download/v0.8.2/research_flow-0.8.2-py3-none-any.whl
+pipx install https://github.com/SpicyChicken6/research-flow/releases/download/v0.8.3/research_flow-0.8.3-py3-none-any.whl
 pipx ensurepath
 ```
 
