@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.8.5 — confirm new workflow creation
+
+- Ask before creating `workflow.yaml` when no YAML file is found in the current
+  folder. Show the destination path and default to No; cancellation creates no files.
+- Keep `--init` as the explicit option for scripts and services. Noninteractive
+  launches without an existing workflow or `--init` exit with guidance.
+- Existing workflows, multiple-file selection, and `--print-url` are unchanged.
+
 ## 0.8.4 — canvas editing and numbered steps
 
 - Moved Arrange and Step list into the canvas toolbar.

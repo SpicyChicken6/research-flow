@@ -1,6 +1,7 @@
 """Linux release security, startup and build regression tests; disposable files only."""
 import http.client
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -15,7 +16,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from server import (ROOT, ProjectStore, ValidationError, access_token,
                     default_project_path, default_token_path, initialize_project,
-                    make_handler, parse_project)
+                    make_handler, parse_project, main)
 
 
 class SetupTests(unittest.TestCase):
@@ -42,6 +43,45 @@ class SetupTests(unittest.TestCase):
     def test_empty_directory_defaults_to_workflow_without_creating_it(self):
         with patch('server.Path.cwd', return_value=self.root):
             self.assertEqual(default_project_path(), self.root / 'workflow.yaml')
+        self.assertEqual(list(self.root.iterdir()), [])
+
+    def test_cli_empty_noninteractive_directory_requires_init(self):
+        result = subprocess.run([sys.executable, str(ROOT / 'server.py')], cwd=self.root,
+                                input='yes\n', capture_output=True, text=True, timeout=10)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('No workflow file found', result.stderr)
+        self.assertIn('--init', result.stderr)
+        self.assertEqual(list(self.root.iterdir()), [])
+
+    def test_empty_folder_prompt_decline_or_interrupt_creates_nothing(self):
+        for answer in ('', 'n', 'NO', EOFError(), KeyboardInterrupt()):
+            with self.subTest(answer=repr(answer)), patch('server.Path.cwd', return_value=self.root), \
+                 patch('sys.argv', ['research-flow']), patch('server.sys.stdin.isatty', return_value=True), \
+                 patch('builtins.input', side_effect=[answer]) as prompt, patch('sys.stdout', new_callable=io.StringIO) as output:
+                main()
+                prompt.assert_called_once()
+                self.assertIn('[y/N]', prompt.call_args.args[0])
+                self.assertIn(str(self.root / 'workflow.yaml'), prompt.call_args.args[0])
+                self.assertIn('Cancelled', output.getvalue())
+                self.assertEqual(list(self.root.iterdir()), [])
+
+    def test_empty_folder_prompt_accepts_yes_after_invalid_answer(self):
+        with patch('server.Path.cwd', return_value=self.root), patch('sys.argv', ['research-flow']), \
+             patch('server.sys.stdin.isatty', return_value=True), patch('builtins.input', side_effect=['maybe', ' YES ']) as prompt, \
+             patch('sys.stdout', new_callable=io.StringIO) as output, patch('server.ThreadingHTTPServer') as httpd, patch('server.signal.signal'):
+            httpd.return_value.server_port = 8765
+            main()
+            self.assertEqual(prompt.call_count, 2)
+            self.assertIn('Please answer yes or no', output.getvalue())
+            httpd.return_value.serve_forever.assert_called_once()
+        self.assertEqual(parse_project((self.root / 'workflow.yaml').read_text())['tasks'], [])
+        self.assertTrue(default_token_path(self.root / 'workflow.yaml').is_file())
+
+    def test_print_url_empty_directory_never_prompts_or_creates(self):
+        with patch('server.Path.cwd', return_value=self.root), patch('sys.argv', ['research-flow', '--print-url']), \
+             patch('builtins.input') as prompt, patch('sys.stderr', new_callable=io.StringIO):
+            with self.assertRaises(SystemExit): main()
+            prompt.assert_not_called()
         self.assertEqual(list(self.root.iterdir()), [])
 
     def test_only_yaml_is_selected_regardless_of_name_or_extension(self):

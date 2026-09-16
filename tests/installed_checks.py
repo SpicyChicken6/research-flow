@@ -23,7 +23,7 @@ def run(executable):
         env = {k: v for k, v in os.environ.items() if k != 'PYTHONPATH'}
         env['XDG_DATA_HOME'] = str(work / 'default data')
         version = subprocess.check_output([executable, '--version'], cwd=work, env=env, text=True)
-        assert version.strip() == 'Research Flow 0.8.4', version
+        assert version.strip() == 'Research Flow 0.8.5', version
         for scenario in ('explicit', 'empty', 'existing'):
             cwd = work / scenario
             cwd.mkdir()
@@ -38,6 +38,12 @@ def run(executable):
             elif scenario == 'existing':
                 project = cwd / 'my-study.yml'
                 project.write_text('# Keep this comment until Save\nschema_version: 1\nproject:\n  name: Existing study\ntasks: []\ncustom: preserved\n')
+            if scenario == 'empty':
+                refusal = subprocess.run([executable], cwd=cwd, env=env, input='',
+                                         capture_output=True, text=True, timeout=10)
+                assert refusal.returncode != 0 and '--init' in refusal.stderr
+                assert not list(cwd.iterdir()), 'Noninteractive launch must not create files'
+                args = ['--init']
             original = project.read_bytes() if project.exists() else None
             proc = subprocess.Popen([executable, *args, '--port', '0'], cwd=cwd, env=env,
                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)

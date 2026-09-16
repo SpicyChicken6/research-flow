@@ -14,8 +14,8 @@ cd ~/research/my-project
 bash ~/apps/research-flow/start.sh
 ```
 
-This opens the only YAML in your current research folder, or creates `workflow.yaml`
-if none exists. Multiple YAML files require an explicit choice. For an existing plan
+This opens the only YAML in your current research folder, or asks before creating `workflow.yaml`
+if none exists. Press Enter to cancel, or use `--init` to allow creation without a prompt. Multiple YAML files require an explicit choice. For an existing plan
 from the application source folder:
 
 ```bash

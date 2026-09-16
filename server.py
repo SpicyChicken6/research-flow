@@ -11,6 +11,7 @@ import re
 import secrets
 import stat
 import signal
+import sys
 import tempfile
 import threading
 import time
@@ -20,7 +21,7 @@ from urllib.parse import urlsplit
 import yaml
 
 ROOT = Path(__file__).resolve().parent
-VERSION = "0.8.4"
+VERSION = "0.8.5"
 MAX_BYTES = 2_000_000
 STATUSES = {'todo', 'in_progress', 'blocked', 'done'}
 MAX_SUBSTEPS = 200
@@ -369,6 +370,27 @@ def default_project_path():
     return candidates[0] if candidates else directory / 'workflow.yaml'
 
 
+def confirm_new_project(path):
+    """Require an explicit choice before creating a workflow in an empty folder."""
+    if not sys.stdin.isatty():
+        raise ValidationError(f'No workflow file found in {path.parent}. '
+                              'Run research-flow --init to create workflow.yaml, '
+                              'or use --project /path/to/file.yaml.')
+    print(f'No workflow file found in {path.parent}.', flush=True)
+    while True:
+        try:
+            answer = input(f'Create a new workflow at {path}? [y/N] ').strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print('\nCancelled. No files created.', flush=True)
+            return False
+        if answer in ('y', 'yes'):
+            return True
+        if answer in ('', 'n', 'no'):
+            print('Cancelled. No files created.', flush=True)
+            return False
+        print('Please answer yes or no.', flush=True)
+
+
 def initialize_project(path):
     """Create a private blank project only when it does not already exist."""
     path = Path(path).expanduser()
@@ -436,8 +458,8 @@ def valid_port(value):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--version', action='version', version=f'Research Flow {VERSION}')
-    parser.add_argument('--project', type=Path, help='Project file. By default, use the only YAML in the current directory, or create workflow.yaml if none exists.')
-    parser.add_argument('--init', action='store_true', help='Create a blank project if the selected file is missing; never overwrite it.')
+    parser.add_argument('--project', type=Path, help='Project file. By default, use the only YAML in the current directory, or ask before creating workflow.yaml if none exists.')
+    parser.add_argument('--init', action='store_true', help='Create a blank project without prompting if the selected file is missing; never overwrite it.')
     parser.add_argument('--port', type=valid_port, default=8765)
     parser.add_argument('--browser-port', type=valid_port, help='Local forwarded port when it differs from --port.')
     parser.add_argument('--token-file', type=Path, help='Private access-token file (created when absent).')
@@ -456,6 +478,9 @@ def main():
             token = access_token(token_path, create=False)
             print(f'http://127.0.0.1:{args.browser_port or args.port}/#token={token}', flush=True)
             return
+        if args.project is None and not args.init and not path.exists() and not path.is_symlink():
+            if not confirm_new_project(path):
+                return
         if args.project is None or args.init:
             initialize_project(path)
         if not path.is_file():

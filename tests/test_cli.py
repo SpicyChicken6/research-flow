@@ -4,6 +4,8 @@ import json
 import os
 from pathlib import Path
 import queue
+import pty
+import time
 import re
 import select
 import socket
@@ -38,6 +40,46 @@ class Relay(socketserver.ThreadingTCPServer):
 
 
 class CLITests(unittest.TestCase):
+    @unittest.skipUnless(os.name == 'posix', 'Terminal prompt requires a POSIX PTY')
+    def test_real_terminal_confirmation_before_creating_files(self):
+        for answer in (b'yes\n', b'\n'):
+            with self.subTest(answer=answer), tempfile.TemporaryDirectory() as temp:
+                master, slave = pty.openpty()
+                proc = subprocess.Popen([sys.executable, str(ROOT / 'server.py'), '--port', '0'],
+                                        cwd=temp, stdin=slave, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                os.close(slave)
+                def read_until(marker):
+                    output = b''
+                    deadline = time.monotonic() + 10
+                    while marker not in output:
+                        remaining = deadline - time.monotonic()
+                        self.assertGreater(remaining, 0, 'Timed out waiting for CLI prompt/startup')
+                        ready, _, _ = select.select([proc.stdout], [], [], remaining)
+                        self.assertTrue(ready, 'No CLI response')
+                        chunk = os.read(proc.stdout.fileno(), 4096)
+                        self.assertTrue(chunk, 'CLI exited before expected output')
+                        output += chunk
+                    return output
+                try:
+                    output = read_until(b'[y/N] ')
+                    self.assertIn(b'No workflow file found', output)
+                    self.assertIn(str(Path(temp) / 'workflow.yaml').encode(), output)
+                    self.assertEqual(list(Path(temp).iterdir()), [])
+                    os.write(master, answer)
+                    if answer == b'yes\n':
+                        read_until(b'Press Ctrl+C to stop.')
+                        self.assertTrue((Path(temp) / 'workflow.yaml').is_file())
+                        self.assertTrue((Path(temp) / '.research-flow/workflow.yaml.token').is_file())
+                    else:
+                        stdout, stderr = proc.communicate(timeout=10)
+                        self.assertEqual(proc.returncode, 0, stderr)
+                        self.assertIn(b'Cancelled', stdout)
+                        self.assertEqual(list(Path(temp).iterdir()), [])
+                finally:
+                    if proc.poll() is None: proc.terminate()
+                    proc.communicate(timeout=10)
+                    os.close(master)
+
     def test_headless_start_forwarded_save_and_shutdown(self):
         with tempfile.TemporaryDirectory() as temp:
             data = Path(temp) / 'data'
@@ -46,7 +88,7 @@ class CLITests(unittest.TestCase):
             local_port = relay.server_address[1]
             # Launch outside the checkout; the default workflow belongs to this CWD.
             proc = subprocess.Popen(
-                [sys.executable, str(ROOT / 'server.py'), '--port', '0',
+                [sys.executable, str(ROOT / 'server.py'), '--init', '--port', '0',
                  '--browser-port', str(local_port)], cwd=temp, env=env,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             messages = queue.Queue()

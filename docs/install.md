@@ -1,6 +1,6 @@
 # Install Research Flow
 
-Research Flow 0.8.4 installs a `research-flow` command. It runs a small Python server
+Research Flow 0.8.5 installs a `research-flow` command. It runs a small Python server
 and serves the existing browser interface. Linux needs Python 3.10+; Node, a source
 checkout, and a server-side desktop are not required to run the installed app.
 
@@ -17,7 +17,7 @@ sudo apt install pipx python3-venv
 Then install Research Flow as your regular user:
 
 ```bash
-pipx install https://github.com/SpicyChicken6/research-flow/releases/download/v0.8.4/research_flow-0.8.4-py3-none-any.whl
+pipx install https://github.com/SpicyChicken6/research-flow/releases/download/v0.8.5/research_flow-0.8.5-py3-none-any.whl
 pipx ensurepath
 ```
 
@@ -36,8 +36,12 @@ research-flow
 ```
 
 - One `.yaml` or `.yml` file in that folder: open it.
-- No YAML files: create a blank `workflow.yaml` there.
+- No YAML files: ask before creating a blank `workflow.yaml` there (default: No).
 - Several YAML files: stop and ask you to choose with `--project`.
+
+When prompted, enter `y` to create the file or press Enter to cancel without
+creating files. For scripts or services, use `research-flow --init` to explicitly
+allow creation; a noninteractive launch without it exits instead of creating a file.
 
 Discovery only examines this directory, not subfolders. The selected file must
 validate as a Research Flow workflow. Invalid or unrelated YAML is not overwritten,
@@ -117,7 +121,7 @@ Create a dedicated virtual environment, then install the release into it:
 ```bash
 python3 -m venv "$HOME/.local/share/research-flow-env"
 "$HOME/.local/share/research-flow-env/bin/python" -m pip install \
-  https://github.com/SpicyChicken6/research-flow/releases/download/v0.8.4/research_flow-0.8.4-py3-none-any.whl
+  https://github.com/SpicyChicken6/research-flow/releases/download/v0.8.5/research_flow-0.8.5-py3-none-any.whl
 "$HOME/.local/share/research-flow-env/bin/research-flow" --project "$HOME/research/my-study/workflow.yaml" --init
 ```
 
