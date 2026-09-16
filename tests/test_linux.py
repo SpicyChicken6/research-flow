@@ -54,20 +54,20 @@ class SetupTests(unittest.TestCase):
         self.assertEqual(list(self.root.iterdir()), [])
 
     def test_empty_folder_prompt_decline_or_interrupt_creates_nothing(self):
-        for answer in ('', 'n', 'NO', EOFError(), KeyboardInterrupt()):
+        for answer in ('n', 'NO', EOFError(), KeyboardInterrupt()):
             with self.subTest(answer=repr(answer)), patch('server.Path.cwd', return_value=self.root), \
                  patch('sys.argv', ['research-flow']), patch('server.sys.stdin.isatty', return_value=True), \
-                 patch('builtins.input', side_effect=[answer]) as prompt, patch('sys.stdout', new_callable=io.StringIO) as output:
+                 patch('server.read_confirmation', side_effect=[answer]) as prompt, patch('sys.stdout', new_callable=io.StringIO) as output:
                 main()
                 prompt.assert_called_once()
-                self.assertIn('[y/N]', prompt.call_args.args[0])
+                self.assertIn('[Y/n]', prompt.call_args.args[0])
                 self.assertIn(str(self.root / 'workflow.yaml'), prompt.call_args.args[0])
                 self.assertIn('Cancelled', output.getvalue())
                 self.assertEqual(list(self.root.iterdir()), [])
 
     def test_empty_folder_prompt_accepts_yes_after_invalid_answer(self):
         with patch('server.Path.cwd', return_value=self.root), patch('sys.argv', ['research-flow']), \
-             patch('server.sys.stdin.isatty', return_value=True), patch('builtins.input', side_effect=['maybe', ' YES ']) as prompt, \
+             patch('server.sys.stdin.isatty', return_value=True), patch('server.read_confirmation', side_effect=['maybe', ' YES ']) as prompt, \
              patch('sys.stdout', new_callable=io.StringIO) as output, patch('server.ThreadingHTTPServer') as httpd, patch('server.signal.signal'):
             httpd.return_value.server_port = 8765
             main()
@@ -79,7 +79,7 @@ class SetupTests(unittest.TestCase):
 
     def test_print_url_empty_directory_never_prompts_or_creates(self):
         with patch('server.Path.cwd', return_value=self.root), patch('sys.argv', ['research-flow', '--print-url']), \
-             patch('builtins.input') as prompt, patch('sys.stderr', new_callable=io.StringIO):
+             patch('server.read_confirmation') as prompt, patch('sys.stderr', new_callable=io.StringIO):
             with self.assertRaises(SystemExit): main()
             prompt.assert_not_called()
         self.assertEqual(list(self.root.iterdir()), [])

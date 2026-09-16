@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.6 — default to creating a workflow
+
+- The new-workflow prompt now defaults to Yes: Enter, `y`, or `yes` creates the file.
+  Explicit No, Ctrl+C, or EOF still cancels without creating files.
+- Esc cancels the terminal prompt immediately, without requiring Enter.
+
 ## 0.8.5 — confirm new workflow creation
 
 - Ask before creating `workflow.yaml` when no YAML file is found in the current

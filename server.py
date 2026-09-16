@@ -21,7 +21,7 @@ from urllib.parse import urlsplit
 import yaml
 
 ROOT = Path(__file__).resolve().parent
-VERSION = "0.8.5"
+VERSION = "0.8.6"
 MAX_BYTES = 2_000_000
 STATUSES = {'todo', 'in_progress', 'blocked', 'done'}
 MAX_SUBSTEPS = 200
@@ -370,6 +370,38 @@ def default_project_path():
     return candidates[0] if candidates else directory / 'workflow.yaml'
 
 
+def read_confirmation(prompt):
+    """Read a terminal answer while letting Escape cancel without Enter."""
+    import termios
+    import tty
+    fd = sys.stdin.fileno()
+    previous = termios.tcgetattr(fd)
+    answer = []
+    try:
+        tty.setcbreak(fd)
+        print(prompt, end='', flush=True)
+        while True:
+            key = os.read(fd, 1)
+            if not key or key == b'\x04':
+                raise EOFError
+            if key in (b'\x1b', b'\x03'):
+                raise KeyboardInterrupt
+            if key in (b'\r', b'\n'):
+                print(flush=True)
+                return ''.join(answer)
+            if key in (b'\x7f', b'\x08'):
+                if answer:
+                    answer.pop()
+                    print('\b \b', end='', flush=True)
+            else:
+                char = key.decode('utf-8', errors='replace')
+                if char.isprintable():
+                    answer.append(char)
+                    print(char, end='', flush=True)
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, previous)
+
+
 def confirm_new_project(path):
     """Require an explicit choice before creating a workflow in an empty folder."""
     if not sys.stdin.isatty():
@@ -379,13 +411,13 @@ def confirm_new_project(path):
     print(f'No workflow file found in {path.parent}.', flush=True)
     while True:
         try:
-            answer = input(f'Create a new workflow at {path}? [y/N] ').strip().lower()
+            answer = read_confirmation(f'Create a new workflow at {path}? [Y/n] (Esc to cancel) ').strip().lower()
         except (EOFError, KeyboardInterrupt):
             print('\nCancelled. No files created.', flush=True)
             return False
-        if answer in ('y', 'yes'):
+        if answer in ('', 'y', 'yes'):
             return True
-        if answer in ('', 'n', 'no'):
+        if answer in ('n', 'no'):
             print('Cancelled. No files created.', flush=True)
             return False
         print('Please answer yes or no.', flush=True)

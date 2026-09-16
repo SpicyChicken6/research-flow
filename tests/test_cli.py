@@ -8,6 +8,8 @@ import pty
 import time
 import re
 import select
+import signal
+import termios
 import socket
 import socketserver
 import subprocess
@@ -42,9 +44,10 @@ class Relay(socketserver.ThreadingTCPServer):
 class CLITests(unittest.TestCase):
     @unittest.skipUnless(os.name == 'posix', 'Terminal prompt requires a POSIX PTY')
     def test_real_terminal_confirmation_before_creating_files(self):
-        for answer in (b'yes\n', b'\n'):
+        for answer in (b'yes\n', b'\n', b'n\n', b'\x1b', b'\x03'):
             with self.subTest(answer=answer), tempfile.TemporaryDirectory() as temp:
                 master, slave = pty.openpty()
+                original_terminal = termios.tcgetattr(master)
                 proc = subprocess.Popen([sys.executable, str(ROOT / 'server.py'), '--port', '0'],
                                         cwd=temp, stdin=slave, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                 os.close(slave)
@@ -61,12 +64,13 @@ class CLITests(unittest.TestCase):
                         output += chunk
                     return output
                 try:
-                    output = read_until(b'[y/N] ')
+                    output = read_until(b'(Esc to cancel) ')
                     self.assertIn(b'No workflow file found', output)
                     self.assertIn(str(Path(temp) / 'workflow.yaml').encode(), output)
                     self.assertEqual(list(Path(temp).iterdir()), [])
-                    os.write(master, answer)
-                    if answer == b'yes\n':
+                    if answer == b'\x03': proc.send_signal(signal.SIGINT)
+                    else: os.write(master, answer)
+                    if answer in (b'yes\n', b'\n'):
                         read_until(b'Press Ctrl+C to stop.')
                         self.assertTrue((Path(temp) / 'workflow.yaml').is_file())
                         self.assertTrue((Path(temp) / '.research-flow/workflow.yaml.token').is_file())
@@ -78,6 +82,7 @@ class CLITests(unittest.TestCase):
                 finally:
                     if proc.poll() is None: proc.terminate()
                     proc.communicate(timeout=10)
+                    self.assertEqual(termios.tcgetattr(master), original_terminal, 'Prompt must restore terminal settings')
                     os.close(master)
 
     def test_headless_start_forwarded_save_and_shutdown(self):
