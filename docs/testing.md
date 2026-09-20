@@ -26,10 +26,11 @@ done
 
 | Location | Coverage |
 | --- | --- |
-| `tests/test_*.py` | YAML validation, migrations, saves, conflicts, backups, authentication, CLI startup and current-folder discovery |
+| `tests/test_*.py` | YAML validation, migrations, saves, conflicts, backups, authentication, CLI startup, updates and current-folder discovery |
 | `tests/test_*.mjs` | Graph model, branches, connections, layout and logo animation |
 | `tests/browser/` | Editing, export/reopen, hierarchy, deletion, minimap, animation and authenticated browser save/reload |
 | `tests/installed_checks.py` | Installed command, bundled assets and saving outside the source checkout |
+| `tests/update_install_checks.py` | Real same-version self-updates in disposable pip and pipx installations, suffix/home targeting and workflow preservation |
 
 Tests use disposable projects. Generated browser reports and screenshots go to
 ignored `test-results/`; the portable HTML build goes to ignored `dist/`.
@@ -59,9 +60,23 @@ The same check can target a pipx-installed `research-flow` executable. GitHub Ac
 runs unit and package-installation jobs on Linux with Python 3.10/3.12, plus browser
 tests. See [Actions](https://github.com/SpicyChicken6/research-flow/actions) for results.
 
+To test actual self-updates without fetching repository code, put the built wheel
+and compatible PyYAML/pip wheels in one folder, then run:
+
+```bash
+.venv/bin/python -m pip install pipx
+mkdir -p /tmp/research-flow-update-wheels
+cp dist/research_flow-*.whl /tmp/research-flow-update-wheels/
+.venv/bin/python -m pip download --only-binary=:all: --dest /tmp/research-flow-update-wheels 'PyYAML>=6.0.2,<7' pip
+.venv/bin/python tests/update_install_checks.py /tmp/research-flow-update-wheels/research_flow-*.whl .venv/bin/pipx
+```
+
+The harness overrides the source URL only in its test process and installs from
+local wheels with network indexes disabled. It never updates your existing app.
+
 ## Repository layout
 
-- `server.py`, `__init__.py`, `__main__.py`: Python server and installed entry points.
+- `server.py`, `updater.py`, `__init__.py`, `__main__.py`: Python server, updater and installed entry points.
 - `web/`: interface, graph model, styles and SVG assets.
 - `scripts/build_preview.py`: build editable standalone HTML without changing source.
 - `examples/`: demonstration workflow used by the preview builder and tests.

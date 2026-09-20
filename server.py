@@ -503,6 +503,7 @@ def bind_server(port, handler, *, auto_port=False):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--version', action='version', version=f'Research Flow {VERSION}')
+    parser.add_argument('--update', action='store_true', help='Update this installation from the latest official main branch, then exit.')
     parser.add_argument('--project', type=Path, help='Project file. By default, use the only YAML in the current directory, or ask before creating workflow.yaml if none exists.')
     parser.add_argument('--init', action='store_true', help='Create a blank project without prompting if the selected file is missing; never overwrite it.')
     parser.add_argument('--port', type=valid_port, default=DEFAULT_PORT,
@@ -513,6 +514,18 @@ def main():
     parser.add_argument('--open', action='store_true', help='Open a local browser; disabled by default for headless Linux.')
     parser.add_argument('--no-open', action='store_true', help=argparse.SUPPRESS)  # Compatibility with earlier launch commands.
     args = parser.parse_args()
+    if args.update:
+        if len(sys.argv[1:]) != 1:
+            parser.error('--update must be used on its own.')
+        if __package__:
+            from .updater import UpdateError, update_installation
+        else:
+            from updater import UpdateError, update_installation
+        try:
+            update_installation(ROOT)
+        except (UpdateError, OSError, ValueError) as error:
+            parser.exit(1, f'Cannot update: {error}\n')
+        return
     if args.browser_port == 0:
         parser.error('--browser-port must be a specific port, not 0.')
     try:

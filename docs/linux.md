@@ -130,16 +130,24 @@ Save browser edits first. Stop with Ctrl+C or:
 systemctl --user stop research-flow
 ```
 
-After publishing the repository, normal updates are:
+For the installed command, update with:
 
 ```bash
-git pull --ff-only
-.venv/bin/python -m pip install .
+research-flow --update
+```
+
+For a source checkout, update from its launcher:
+
+```bash
+bash ~/apps/research-flow/start.sh --update
 systemctl --user restart research-flow
 ```
 
-Do not run these inside the directory containing research data. Do not run two
-Research Flow instances against one project. Updates do not migrate data on disk
+The updater follows official `main` and exits. Source checkouts must be clean and
+on `main`; installed copies update through pipx or their own Python's pip. See the
+[update guide](install.md#update-or-uninstall) for requirements and older versions.
+
+Do not run two Research Flow instances against one project. Updates do not migrate data on disk
 until you explicitly Save from the browser.
 
 ## Access token and backups

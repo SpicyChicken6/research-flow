@@ -42,6 +42,11 @@ Open the private URL printed in the terminal. Keep the app running and click
 
 Existing files must be valid Research Flow workflows.
 
+To update to the latest repository code, save and stop the app, then run
+`research-flow --update` and launch it again. See the
+[update guide](docs/install.md#update-or-uninstall) if your installed version does
+not yet have this option.
+
 ### Working on a remote server?
 
 In VS Code Remote-SSH, enable [integrated browser remote access](docs/install.md#open-inside-vs-code-over-remote-ssh),
