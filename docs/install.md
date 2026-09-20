@@ -66,6 +66,12 @@ Use an absolute path to make the destination independent of the launch directory
 Relative `--project` paths are resolved against the terminal's current directory.
 Each server instance edits one YAML file.
 
+The server starts on port **8765**. If that default port is occupied, it tries
+8766, 8767, and onward until it can bind, then prints a warning with the selected
+port. Open the newly printed private URL; `--open` also uses the selected port.
+This also applies to `--port 8765`. Other explicit `--port` values stay fixed and
+report an error if unavailable; `--port 0` lets the operating system choose a port.
+
 **Upgrading from 0.8.0/0.8.1:** those versions used a global default data directory.
 To continue that workflow, pass
 `--project "$HOME/.local/share/research-flow/project.yaml"` (or your previous
@@ -112,6 +118,9 @@ Recover the URL for an existing running instance with the same project/port opti
 research-flow --project "$HOME/research/my-study/workflow.yaml" --print-url
 ```
 
+If startup selected another port, include that actual port, for example
+`--port 8766 --print-url`. `--print-url` does not search for a running instance.
+
 Reference: [VS Code browser remote connections](https://code.visualstudio.com/docs/debugtest/integrated-browser#_browse-over-remote-connections).
 
 ## Alternative: install without pipx
@@ -129,13 +138,52 @@ The installed environment also supports `python -m research_flow`.
 
 ## Update or uninstall
 
-Save your edits and stop the running server before updating. Download a newer wheel
-from [Releases](https://github.com/SpicyChicken6/research-flow/releases), then use
-`pipx install --force /absolute/path/to/the-new-wheel.whl`. Restart with the same
-`--project` path. A version-specific URL stays on that version; `pipx upgrade` will
-not discover a new release from a pinned wheel URL.
+Save your edits and stop the running server, then run:
 
-To follow the development branch instead (requires Git):
+```bash
+research-flow --update
+```
+
+This updates the current installation from the official repository's **main**
+branch, including unreleased commits, and exits. Run `research-flow` again from
+your research folder (or with the same `--project` path) afterward. Updating does
+not open, create, or save a workflow, and does not restart running servers.
+Use `--update` on its own, without server options.
+
+For pipx installations, the command uses pipx and preserves the installation's
+home and suffix. The pipx command must be on PATH. Other installed copies use
+their own Python's pip. These installations download a fresh source archive;
+Git is not required, and new commits are installed even when the package version
+has not changed. Internet access and permission to update the installation are
+required. Installer failures exit with an error.
+
+For a source checkout, run `bash start.sh --update`. It fetches official `main`,
+fast-forwards the checkout, and installs an editable link into the launcher's
+Python environment so it continues to use that source tree. The checkout must be
+on `main`, with no local changes or extra local
+commits. The updater never resets or stashes edits, and refuses an update that
+would overwrite ignored files. A downloaded source archive has no Git history;
+install it with pipx or use a Git clone for future updates.
+Editable pipx checkouts require a manual Git update and editable pipx reinstall;
+`--update` stops before changing those installations.
+
+**Older versions without `--update`:** install the repository version once:
+
+```bash
+pipx install --force https://github.com/SpicyChicken6/research-flow/archive/refs/heads/main.zip
+```
+
+For a dedicated virtual environment, use its Python with
+`-m pip install --upgrade --force-reinstall --no-cache-dir` and the same archive
+URL. The new `--update` option is available once the change is merged into `main`.
+
+To install a specific release instead, download its wheel from
+[Releases](https://github.com/SpicyChicken6/research-flow/releases), then use
+`pipx install --force /absolute/path/to/the-new-wheel.whl`. A version-specific URL
+stays on that version; `pipx upgrade` will not discover a new release from a pinned
+wheel URL.
+
+For a manual Git-based installation (requires Git):
 
 ```bash
 pipx install 'git+https://github.com/SpicyChicken6/research-flow.git'

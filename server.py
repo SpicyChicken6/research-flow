@@ -2,6 +2,7 @@
 """Single-project Research Flow server for loopback access through an SSH tunnel."""
 from __future__ import annotations
 import argparse
+import errno
 import hashlib
 import json
 import math
@@ -22,6 +23,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parent
 VERSION = "0.8.6"
+DEFAULT_PORT = 8765
 MAX_BYTES = 2_000_000
 STATUSES = {'todo', 'in_progress', 'blocked', 'done'}
 MAX_SUBSTEPS = 200
@@ -487,18 +489,43 @@ def valid_port(value):
     return port
 
 
+def bind_server(port, handler, *, auto_port=False):
+    """Bind directly so choosing an available port cannot race with another process."""
+    while True:
+        try:
+            return ThreadingHTTPServer(('127.0.0.1', port), handler)
+        except OSError as error:
+            if not auto_port or error.errno != errno.EADDRINUSE or port == 0 or port == 65535:
+                raise
+            port += 1
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--version', action='version', version=f'Research Flow {VERSION}')
+    parser.add_argument('--update', action='store_true', help='Update this installation from the latest official main branch, then exit.')
     parser.add_argument('--project', type=Path, help='Project file. By default, use the only YAML in the current directory, or ask before creating workflow.yaml if none exists.')
     parser.add_argument('--init', action='store_true', help='Create a blank project without prompting if the selected file is missing; never overwrite it.')
-    parser.add_argument('--port', type=valid_port, default=8765)
+    parser.add_argument('--port', type=valid_port, default=DEFAULT_PORT,
+                        help=f'Server port (default: {DEFAULT_PORT}; tries subsequent ports if busy). Other ports must be available; 0 selects an OS-assigned port.')
     parser.add_argument('--browser-port', type=valid_port, help='Local forwarded port when it differs from --port.')
     parser.add_argument('--token-file', type=Path, help='Private access-token file (created when absent).')
     parser.add_argument('--print-url', action='store_true', help='Print the private access URL for an existing token, then exit.')
     parser.add_argument('--open', action='store_true', help='Open a local browser; disabled by default for headless Linux.')
     parser.add_argument('--no-open', action='store_true', help=argparse.SUPPRESS)  # Compatibility with earlier launch commands.
     args = parser.parse_args()
+    if args.update:
+        if len(sys.argv[1:]) != 1:
+            parser.error('--update must be used on its own.')
+        if __package__:
+            from .updater import UpdateError, update_installation
+        else:
+            from updater import UpdateError, update_installation
+        try:
+            update_installation(ROOT)
+        except (UpdateError, OSError, ValueError) as error:
+            parser.exit(1, f'Cannot update: {error}\n')
+        return
     if args.browser_port == 0:
         parser.error('--browser-port must be a specific port, not 0.')
     try:
@@ -520,10 +547,14 @@ def main():
         store = ProjectStore(path)
         store.read()
         token = access_token(token_path)
-        httpd = ThreadingHTTPServer(('127.0.0.1', args.port),
-                                    make_handler(store, auth_token=token, browser_port=args.browser_port))
+        httpd = bind_server(args.port,
+                            make_handler(store, auth_token=token, browser_port=args.browser_port),
+                            auto_port=args.port == DEFAULT_PORT)
     except (OSError, ValueError, UnicodeError) as error:
         parser.exit(1, f'Cannot start: {error}\n')
+    if args.port == DEFAULT_PORT and httpd.server_port != args.port:
+        print(f'Warning: default port {args.port} is already in use; using port {httpd.server_port} instead.',
+              file=sys.stderr, flush=True)
     local_port = args.browser_port or httpd.server_port
     url = f'http://127.0.0.1:{local_port}/#token={token}'
     print(f'Research Flow {VERSION} — listening on 127.0.0.1:{httpd.server_port}\n'

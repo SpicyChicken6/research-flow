@@ -58,6 +58,11 @@ Open the private access URL from the server terminal in your local browser. The
 `#token=…` fragment is consumed by the frontend and removed from the visible URL.
 The SSH tunnel carries traffic; no firewall opening or `0.0.0.0` binding is needed.
 
+If the server warns that port 8765 is occupied, use its selected port in the tunnel
+instead. For example, if it selected 8766, use
+`-L 127.0.0.1:8766:127.0.0.1:8766` and open the newly printed URL. With an explicit
+`--browser-port`, keep that local port and update the tunnel's server destination.
+
 When local port 8765 is occupied, configure **both** ends explicitly:
 
 ```bash
@@ -114,6 +119,9 @@ it as private. User services may stop on logout unless lingering is enabled; ask
 administrator before changing that policy. The service template is optional and
 must be checked against the target machine. It has not been installed on your server.
 
+If startup moved from port 8765 to another port, pass that actual port with
+`--port` when recovering the URL.
+
 ## Stop and update
 
 Save browser edits first. Stop with Ctrl+C or:
@@ -122,16 +130,24 @@ Save browser edits first. Stop with Ctrl+C or:
 systemctl --user stop research-flow
 ```
 
-After publishing the repository, normal updates are:
+For the installed command, update with:
 
 ```bash
-git pull --ff-only
-.venv/bin/python -m pip install .
+research-flow --update
+```
+
+For a source checkout, update from its launcher:
+
+```bash
+bash ~/apps/research-flow/start.sh --update
 systemctl --user restart research-flow
 ```
 
-Do not run these inside the directory containing research data. Do not run two
-Research Flow instances against one project. Updates do not migrate data on disk
+The updater follows official `main` and exits. Source checkouts must be clean and
+on `main`; installed copies update through pipx or their own Python's pip. See the
+[update guide](install.md#update-or-uninstall) for requirements and older versions.
+
+Do not run two Research Flow instances against one project. Updates do not migrate data on disk
 until you explicitly Save from the browser.
 
 ## Access token and backups
@@ -161,9 +177,10 @@ Check for the remote indicator. If using an SSH tunnel with another browser, use
 `127.0.0.1` or `localhost` and set `--browser-port` when the ports differ.
 Direct remote-host access and public reverse-proxy hosting are not supported.
 
-**Address already in use:** stop the previous instance or select another `--port`
-and open the newly printed URL. If using an SSH tunnel, update its destination port
-too. Do not kill unrelated processes.
+**Default port already in use:** the app warns and automatically selects the next
+available port after 8765. Open the newly printed URL. If using an SSH tunnel,
+update its destination port too. Other explicit `--port` values stay fixed; choose
+another port if one is occupied. Do not kill unrelated processes.
 
 **No venv/ensurepip:** install your distribution's Python venv package or use an
 existing Python 3.10+ environment. No sudo is needed by Research Flow itself.

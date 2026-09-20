@@ -22,6 +22,12 @@ jobs:
       - run: python -m twine check dist/*.whl dist/*.tar.gz
       - run: python -m pipx install dist/*.whl
       - run: python tests/installed_checks.py "$PIPX_BIN_DIR/research-flow"
+      - name: Verify offline self-updates in disposable pip and pipx environments
+        run: |
+          mkdir -p /tmp/research-flow-update-wheels
+          cp dist/research_flow-*.whl /tmp/research-flow-update-wheels/
+          python -m pip download --only-binary=:all: --dest /tmp/research-flow-update-wheels 'PyYAML>=6.0.2,<7' pip
+          python tests/update_install_checks.py /tmp/research-flow-update-wheels/research_flow-*.whl "$(command -v pipx)"
       - run: |
           python -m venv /tmp/research-flow-sdist
           /tmp/research-flow-sdist/bin/python -m pip install dist/*.tar.gz
