@@ -66,6 +66,12 @@ Use an absolute path to make the destination independent of the launch directory
 Relative `--project` paths are resolved against the terminal's current directory.
 Each server instance edits one YAML file.
 
+The server starts on port **8765**. If that default port is occupied, it tries
+8766, 8767, and onward until it can bind, then prints a warning with the selected
+port. Open the newly printed private URL; `--open` also uses the selected port.
+This also applies to `--port 8765`. Other explicit `--port` values stay fixed and
+report an error if unavailable; `--port 0` lets the operating system choose a port.
+
 **Upgrading from 0.8.0/0.8.1:** those versions used a global default data directory.
 To continue that workflow, pass
 `--project "$HOME/.local/share/research-flow/project.yaml"` (or your previous
@@ -111,6 +117,9 @@ Recover the URL for an existing running instance with the same project/port opti
 ```bash
 research-flow --project "$HOME/research/my-study/workflow.yaml" --print-url
 ```
+
+If startup selected another port, include that actual port, for example
+`--port 8766 --print-url`. `--print-url` does not search for a running instance.
 
 Reference: [VS Code browser remote connections](https://code.visualstudio.com/docs/debugtest/integrated-browser#_browse-over-remote-connections).
 

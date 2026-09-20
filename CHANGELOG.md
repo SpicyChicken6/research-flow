@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- When default port 8765 is occupied, try successive ports and warn with the
+  selected port. The private URL, local browser launch, and forwarding instructions
+  use the bound port; other explicit ports retain their fixed-port behavior.
+
 ## 0.8.6 — default to creating a workflow
 
 - The new-workflow prompt now defaults to Yes: Enter, `y`, or `yes` creates the file.
