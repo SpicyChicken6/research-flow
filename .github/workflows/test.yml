@@ -64,4 +64,6 @@ jobs:
       - run: python tests/browser/logo_motion_checks.py
       - run: python tests/browser/children_checks.py
       - run: python tests/browser/branch_update_checks.py
+      - run: python tests/browser/stage_checks.py
+      - run: python tests/browser/minimap_checks.py
       - run: python tests/browser/linux_browser_checks.py

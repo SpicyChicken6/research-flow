@@ -3,21 +3,25 @@
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from http.server import ThreadingHTTPServer
-import json,re,sys,threading,http.client,os,shutil
+import json,re,sys,threading,http.client,os,shutil,time
 from playwright.sync_api import sync_playwright, expect
 ROOT=Path(__file__).resolve().parents[2];sys.path.insert(0,str(ROOT))
 from server import parse_project,ProjectStore,make_handler
 OUT=ROOT/'test-results';OUT.mkdir(exist_ok=True)
 HTML=(ROOT/'dist/research-flow.html').read_text()
-CHECKS=[];ERRORS=[]
+CHECKS=[];ERRORS=[];LAST_EXPORT=0
 def check(value,label):
  if not value:raise AssertionError(label)
  CHECKS.append(label);print('PASS',label,flush=True)
 def opened(b,html=HTML,width=1600,height=1000):
  p=b.new_page(viewport={'width':width,'height':height},accept_downloads=True,reduced_motion='reduce');p.set_default_timeout(5000);p.on('pageerror',lambda e:ERRORS.append(str(e)));p.set_content(html,wait_until='load');expect(p.locator('#save-button')).to_be_enabled();return p
 def snap(p):
+ global LAST_EXPORT
+ # Chromium limits download bursts; pace snapshot exports in this long suite.
+ time.sleep(max(0,1-(time.monotonic()-LAST_EXPORT)))
  p.locator('#more-menu summary').click()
  with p.expect_download() as d:p.locator('[data-action=export-json]').click()
+ LAST_EXPORT=time.monotonic()
  return json.loads(Path(d.value.path()).read_text())
 def task(doc,id):return next(t for t in doc['tasks'] if t['id']==id)
 def go(p,id):
@@ -40,7 +44,7 @@ with sync_playwright() as pw:
  check(p.locator('.edge-hit[data-edge]').count()==4,'only explicit dependencies have arrows')
  check(p.locator('.substeps-section,.substep-row,.node-substeps,[data-action=add-substep]').count()==0,'previous checklist editor and badges are absent')
  check(not p.locator('#inspector').is_visible(),'initial view remains a quiet canvas without details')
- check(p.locator('.task-node[data-id=metadata] .task-index').inner_text()=='2.1.1','grandchild card shows its derived hierarchical number')
+ check(p.locator('.task-node .task-index,.task-node .step-number-button').count()==0,'main and child cards omit step-number badges')
  root=rect(p,'analysis');child=rect(p,'preparation');grand=rect(p,'metadata')
  check(child['width']<root['width'] and child['height']<root['height'],'child cards are physically smaller, not a scaled canvas')
  check(abs(child['width']-grand['width'])<.1 and abs(child['height']-grand['height'])<.1,'grandchildren keep the same readable child dimensions')
@@ -96,10 +100,12 @@ with sync_playwright() as pw:
  check(indents==[0,0,22,44,44,22,44,0],'list indentation increases consistently at each hierarchy level')
  check(snap(p)==renamed,'opening the hierarchical list preserves the saved task order and data')
  p.screenshot(path=str(OUT/'hierarchical-list.png'))
- overview(p);go(p,'analysis');p.locator('#resources-tab').click();p.locator('.task-node[data-id=analysis] .step-number-button').click();expect(p.locator('#step-number')).to_be_focused()
+ overview(p);go(p,'analysis');p.locator('#resources-tab').click();p.locator('#plan-tab').click();p.locator('#step-number').focus();expect(p.locator('#step-number')).to_be_focused()
  p.locator('#step-number').fill('1');p.locator('#step-number').press('Enter');numbered=snap(p)
  check(task(numbered,'analysis')['step_number']==1 and task(numbered,'question')['step_number']==2,'choosing an occupied number swaps main-step numbers')
- check(p.locator('.task-node[data-id=metadata] .task-index').inner_text()=='1.1.1','renumbering updates grandchild labels immediately')
+ p.locator('#list-button').click()
+ check(p.locator('tr:has(.table-task[data-id=metadata]) .table-number').inner_text()=='1.1.1','renumbering updates the grandchild number in Step list immediately')
+ overview(p);go(p,'analysis')
  check(numbered['layout']==renamed['layout'],'number editing preserves canvas positions')
  p.locator('#step-number').fill('0');p.locator('#step-number').press('Enter');check(snap(p)==numbered,'invalid number edits do not change workflow data')
  p.locator('#undo-button').click();check(snap(p)==renamed,'one undo restores both main numbers and descendant labels')
@@ -141,6 +147,10 @@ with sync_playwright() as pw:
  check(snap(p)==base,'revealing a dependency bundle does not mutate project data')
  overview(p);p.locator('.task-node[data-id=preparation] .children-toggle').click();check(p.locator('.task-node:visible').count()==6,'nested collapse hides just that subtree')
  p.locator('.task-node[data-id=preparation] .children-toggle').click();check(p.locator('.task-node:visible').count()==8,'nested expansion restores its descendant cards')
+ # These assertions compare saved coordinate deltas; stage-to-freeform capture
+ # is exercised separately by stage_checks.py.
+ p.locator('#layout-freeform').click()
+ check(p.locator('.task-node .task-index,.task-node .step-number-button').count()==0,'freeform cards also omit step-number badges')
  base=snap(p);drag_node(p,'preparation');moved=snap(p)
  delta={k:moved['layout']['positions']['preparation'][k]-base['layout']['positions']['preparation'][k] for k in ['x','y']}
  check(delta['x']!=0,'dragging parent changes its position')
@@ -161,7 +171,7 @@ with sync_playwright() as pw:
  check(task(d,'metadata')['parent_id']=='analysis' and task(d,'batches')['parent_id']=='analysis','delete promotes direct children one level without deleting their work')
  check(task(d,'metadata')['notes']==task(base,'metadata')['notes'],'promoted child notes survive parent deletion')
  p.locator('#undo-button').click();check(snap(p)==base,'undo restores deleted parent and original hierarchy')
- overview(p);p.locator('.task-node[data-id=preparation]').focus();p.keyboard.press('ArrowRight');d=snap(p)
+ overview(p);p.locator('#layout-freeform').click();p.locator('.task-node[data-id=preparation]').focus();p.keyboard.press('ArrowRight');d=snap(p)
  check(all(d['layout']['positions'][id]['x']==base['layout']['positions'][id]['x']+10 for id in ['preparation','metadata','batches']),'keyboard movement also moves the branch consistently')
  p.close()
  # Migration from a saved 0.6 project.

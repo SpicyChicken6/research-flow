@@ -193,6 +193,85 @@ export function autoLayout(project) {
   });
   return next;
 }
+/** Dependency stages are derived from edges only; parenthood never adds an edge. */
+export function dependencyStages(project) {
+  const stages = new Map(project.tasks.map(task => [task.id, 0]));
+  const remaining = new Map(), dependents = new Map(project.tasks.map(task => [task.id, []]));
+  for (const task of project.tasks) {
+    remaining.set(task.id, task.depends_on.length);
+    for (const source of task.depends_on) {
+      if (!dependents.has(source)) throw Error(`Unknown dependency “${source}” on ${task.id}.`);
+      dependents.get(source).push(task.id);
+    }
+  }
+  const ready = project.tasks.filter(task => !remaining.get(task.id)).map(task => task.id);
+  for (let cursor = 0; cursor < ready.length; cursor++) {
+    const source = ready[cursor];
+    for (const target of dependents.get(source)) {
+      stages.set(target, Math.max(stages.get(target), stages.get(source) + 1));
+      remaining.set(target, remaining.get(target) - 1);
+      if (!remaining.get(target)) ready.push(target);
+    }
+  }
+  if (ready.length !== project.tasks.length) throw Error('This dependency would create a cycle.');
+  return stages;
+}
+
+/** A presentation-only layout: saved freeform positions and metadata are untouched. */
+export function stageLayout(project) {
+  const ranks = dependencyStages(project), columns = new Map();
+  for (const {task} of stepOutline(project)) {
+    const index = ranks.get(task.id);
+    if (!columns.has(index)) columns.set(index, []);
+    columns.get(index).push(task);
+  }
+  const padding = 24, header = 48, rowGap = 34, columnGap = 84;
+  const measured = [...columns].sort(([a], [b]) => a - b).map(([index, tasks]) => ({
+    index, tasks,
+    width: Math.max(...tasks.map(task => taskSize(task).width)) + 2 * padding,
+    contentHeight: tasks.reduce((height, task) => height + taskSize(task).height, 0) + (tasks.length - 1) * rowGap,
+  }));
+  const contentHeight = Math.max(0, ...measured.map(column => column.contentHeight));
+  const positions = {}, stages = [];
+  let x = 0;
+  for (const column of measured) {
+    let y = header + padding + (contentHeight - column.contentHeight) / 2;
+    for (const task of column.tasks) {
+      const size = taskSize(task);
+      positions[task.id] = {x: x + (column.width - size.width) / 2, y};
+      y += size.height + rowGap;
+    }
+    stages.push({index: column.index, x, y: 0, width: column.width,
+      height: header + 2 * padding + contentHeight, taskIds: column.tasks.map(task => task.id)});
+    x += column.width + columnGap;
+  }
+  return {positions, stages};
+}
+
+/** Trace both directions independently so another prerequisite is not highlighted. */
+function dependencyPath(project, id) {
+  const upstream = new Map(project.tasks.map(task => [task.id, task.depends_on]));
+  const ids = new Set(), edges = new Set();
+  if (!upstream.has(id)) return {ids, edges};
+  const downstream = new Map(project.tasks.map(task => [task.id, []]));
+  for (const task of project.tasks) for (const source of task.depends_on) downstream.get(source)?.push(task.id);
+  ids.add(id);
+  for (const graph of [upstream, downstream]) {
+    const visited = new Set([id]), queue = [id];
+    for (let cursor = 0; cursor < queue.length; cursor++) {
+      const current = queue[cursor];
+      for (const next of graph.get(current) || []) {
+        edges.add(graph === upstream ? `${next}|${current}` : `${current}|${next}`);
+        if (visited.has(next)) continue;
+        visited.add(next); ids.add(next); queue.push(next);
+      }
+    }
+  }
+  return {ids, edges};
+}
+export const dependencyPathIds = (project, id) => dependencyPath(project, id).ids;
+/** Edge keys omit shortcuts that bypass the selected step, even if both ends are on its path. */
+export const dependencyPathEdges = (project, id) => dependencyPath(project, id).edges;
 /** Deliberately conservative YAML emitter: quoted scalar values, no tags/aliases. */
 export function toYaml(value, indent = 0) {
   const pad = ' '.repeat(indent);

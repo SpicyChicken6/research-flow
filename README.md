@@ -6,10 +6,11 @@ Research Flow is a visual planner for a single research project. Connect steps,
 organize them into branches, and keep your workflow in a readable YAML file on your
 own machine or Linux server.
 
-![Research Flow showing connected research steps and nested branches](docs/screenshot.png)
+![Research Flow showing dependency stages, nested research steps, and the Stages / Freeform switch](docs/screenshot.png)
 
 ## Features
 
+- **Dependency stages** — group steps automatically from left to right, with independent steps together; switch to freeform to use your saved arrangement.
 - **Canvas editing** — arrange, connect, rename, and delete steps directly on the canvas.
 - **Nested branches** — organize numbered steps and children, with an indented list view.
 - **Focus and overview** — zoom into a branch or navigate the whole project with the minimap.

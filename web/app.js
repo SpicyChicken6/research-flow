@@ -1,5 +1,5 @@
 import { readAccessToken } from './connection.mjs';
-import { STATUS, clone, validateProject, addDependency, addBranchDependency, removeTask, autoLayout, toYaml, insertBlankStep, childrenOf, descendantIds, ancestorIds, taskSize, setParent, moveBranch, stepOutline, setStepNumber } from './model.mjs';
+import { STATUS, clone, validateProject, addDependency, addBranchDependency, removeTask, autoLayout, toYaml, insertBlankStep, childrenOf, descendantIds, ancestorIds, taskSize, setParent, moveBranch, stepOutline, setStepNumber, stageLayout, dependencyPathIds, dependencyPathEdges } from './model.mjs';
 // BEGIN LOGO MOTION — presentation only; no project or history state.
 const LOGO_MOTION = Object.freeze({loadDuration:720, viewDuration:480});
 function createLogoMotion(svg) {
@@ -117,6 +117,7 @@ const portableTemplate = portable ? '<!doctype html>\n' + document.documentEleme
 let project = ensurePositions(validateProject(JSON.parse($('#initial-project').textContent)));
 let baseline = JSON.stringify(project), revision = null, mode = 'loading', filePath = 'project.yaml';
 let selected = null, selectedEdge = null, inspectorTab = 'plan', focusMode = false, view = 'graph';
+let layoutMode = 'stages', stageCache = null, stageProject = null;
 let pointer = null, connectFrom = null, mapOpen = true;
 let pendingDeletion = null;
 let lastNodeClick = null;
@@ -124,6 +125,7 @@ let lastNodeClick = null;
 const collapsedBranches = new Set();
 let dependencyBundles = new Map();
 let transform = {x:40, y:140, zoom:1}, miniBounds = null;
+let miniPointer = null, miniClick = null;
 let history = [], future = [], lastGroup = '', groupTime = 0;
 let busy = false, conflict = false, serverError = false, pollBusy = false;
 let copyDownloaded = false, inspectorSelection = null;
@@ -131,7 +133,21 @@ const logoMotion = createLogoMotion($('.brand-logo'));
 let lastLogoView = null;
 const dirty = () => JSON.stringify(project) !== baseline;
 const currentTask = () => project.tasks.find(t => t.id === selected);
-const positionOf = id => project.layout.positions[id] || {x:0, y:0};
+function stagedLayout() {
+  if (stageProject !== project) { stageCache = stageLayout(project); stageProject = project; }
+  return stageCache;
+}
+const positionOf = id => (layoutMode === 'stages' ? stagedLayout().positions : project.layout.positions)[id] || {x:0, y:0};
+// Only a deliberate move copies the staged positions into the saved freeform layout.
+function startFreeformMove(doc) {
+  if (layoutMode === 'stages') {
+    for (const [id, position] of Object.entries(stagedLayout().positions)) {
+      doc.layout.positions[id] = {...doc.layout.positions[id], ...position};
+    }
+    layoutMode = 'freeform';
+  }
+  return doc;
+}
 const edgeExists = key => { if (!key) return false; const [a,b] = key.split('|'); return project.tasks.some(t => t.id === b && t.depends_on.includes(a)); };
 function ensurePositions(doc) {
   if(!doc.tasks.length)return doc;
@@ -154,21 +170,32 @@ function toast(message, error = false) {
   const el = document.createElement('div'); el.className = `toast${error ? ' error' : ''}`; el.textContent = message;
   $('#toasts').append(el); setTimeout(() => el.remove(), error ? 6500 : 3200);
 }
-function remember(before, group = '') {
-  if (!group || group !== lastGroup || Date.now() - groupTime > 900) { history.push(before); if (history.length > 70) history.shift(); }
+function remember(before, group = '', beforeLayout = layoutMode) {
+  if (!group || group !== lastGroup || Date.now() - groupTime > 900) {
+    history.push({document:before, layoutMode:beforeLayout===layoutMode?null:beforeLayout});
+    if (history.length > 70) history.shift();
+  }
   lastGroup = group; groupTime = Date.now(); future = [];
 }
 function change(fn, {group='', inspector=true, validate=false, graph=true} = {}) {
-  const before = clone(project), next = clone(project);
+  const before = clone(project), next = clone(project), beforeLayout = layoutMode;
   try {
     const result = fn(next) || next;
     if (validate) validateProject(result);
     if (JSON.stringify(before) === JSON.stringify(result)) return true;
-    remember(before, group); project = result; refresh(inspector,graph); return true;
-  } catch(error) { toast(error.message, true); return false; }
+    remember(before, group, beforeLayout); project = result; refresh(inspector,graph); return true;
+  } catch(error) { layoutMode = beforeLayout; toast(error.message, true); return false; }
 }
-function undo() { if (!history.length) return; future.push(clone(project)); project = history.pop(); lastGroup = ''; refresh(); }
-function redo() { if (!future.length) return; history.push(clone(project)); project = future.pop(); lastGroup = ''; refresh(); }
+function restoreHistory(from,to) {
+  if(!from.length)return;
+  const entry=from.pop();
+  to.push({document:clone(project),layoutMode:entry.layoutMode===null?null:layoutMode});
+  project=entry.document;
+  if(entry.layoutMode!==null)layoutMode=entry.layoutMode;
+  lastGroup='';refresh();if(layoutMode==='stages')fitGraph();
+}
+function undo() { restoreHistory(history,future); }
+function redo() { restoreHistory(future,history); }
 function focusedIds() {
   const t=currentTask(); if(!focusMode || !t)return null;
   const branch=new Set([t.id,...descendantIds(project,t.id)]), ids=new Set(branch);
@@ -267,6 +294,12 @@ function renderHeader() {
   $('#list-button').classList.toggle('active', view === 'list');
   $('#list-button').setAttribute('aria-pressed', String(view === 'list'));
   $('#arrange-button').hidden = view !== 'graph';
+  $('#layout-control').hidden = view !== 'graph';
+  $$('#layout-control [data-layout]').forEach(button=>{
+    const active=button.dataset.layout===layoutMode;
+    button.classList.toggle('active',active);button.setAttribute('aria-pressed',String(active));
+  });
+  $('#arrange-button').title = layoutMode === 'stages' ? 'Fit automatically arranged stages' : 'Arrange all steps';
   const count=visibleTasks().length;
   $('#view-context').textContent = view==='graph' && count<project.tasks.length ? `${count} of ${project.tasks.length} steps` : `${project.tasks.length} step${project.tasks.length===1?'':'s'}`;
   const mo=$('#map-option'); mo.innerHTML = `${icon('map')}${mapOpen ? 'Hide' : 'Show'} minimap`; mo.setAttribute('aria-pressed',String(mapOpen));
@@ -282,12 +315,31 @@ function edgeGeometry(source,target) {
 function hierarchyPath(parent,child) {
   const a=positionOf(parent),b=positionOf(child);
   const pa=taskSize(project.tasks.find(t=>t.id===parent)),ch=taskSize(project.tasks.find(t=>t.id===child));
+  if(layoutMode==='stages' && Math.abs(a.x-b.x)<Math.max(pa.width,ch.width)) {
+    // A shared side gutter keeps sibling branches out of intervening cards.
+    const gutter=Math.min(a.x,b.x)-14;
+    return `M ${a.x} ${a.y+pa.height-20} H ${gutter} V ${b.y+20} H ${b.x}`;
+  }
   const sx=a.x+pa.width/2,sy=a.y+pa.height,tx=b.x+ch.width/2,ty=b.y;
   const middle=(sy+ty)/2;
   return `M ${sx} ${sy} C ${sx} ${middle}, ${tx} ${middle}, ${tx} ${ty}`;
 }
+function visibleStageFrames() {
+  if (layoutMode !== 'stages') return [];
+  const tasks=visibleTasks(); if (!tasks.length) return [];
+  const shown=new Set(tasks.map(t=>t.id));
+  const top=Math.min(...tasks.map(t=>positionOf(t.id).y))-72;
+  const bottom=Math.max(...tasks.map(t=>positionOf(t.id).y+taskSize(t).height))+24;
+  return stagedLayout().stages.filter(stage=>stage.taskIds.some(id=>shown.has(id)))
+    .map(stage=>({...stage,y:top,height:bottom-top}));
+}
+function renderStages() {
+  $('#stages').innerHTML=visibleStageFrames().map(stage=>
+    `<section class="stage-column" data-stage="${stage.index}" aria-label="Stage ${stage.index+1}" style="left:${stage.x}px;top:${stage.y}px;width:${stage.width}px;height:${stage.height}px"><h2>Stage ${stage.index+1}</h2></section>`).join('');
+}
 function renderEdges() {
   const shown=new Set(visibleTasks().map(t=>t.id));dependencyBundles=new Map();
+  const relatedEdges=selected&&!selectedEdge ? dependencyPathEdges(project,selected) : new Set();
   let html=`<defs><marker id="arrowhead" viewBox="0 0 8 8" refX="10" refY="4" markerWidth="5" markerHeight="5" orient="auto"><path d="M0 0L8 4L0 8" fill="#91a1b6"/></marker><marker id="selected-arrow" viewBox="0 0 8 8" refX="10" refY="4" markerWidth="5" markerHeight="5" orient="auto"><path d="M0 0L8 4L0 8" fill="#276cdb"/></marker></defs>`;
   for(const t of project.tasks) {
     if(!t.parent_id||!shown.has(t.id)||!shown.has(t.parent_id))continue;
@@ -308,24 +360,27 @@ function renderEdges() {
       dependencyBundles.set(key,edges);
       const label=`${edges.length} hidden link${edges.length===1?'':'s'}`;
       const desc=edges.map(e=>`${project.tasks.find(t=>t.id===e.source).title} → ${project.tasks.find(t=>t.id===e.target).title}`).join('; ');
-      html+=`<g><path class="edge-path bundled" d="${g.d}" marker-end="url(#arrowhead)"/><path class="edge-hit" d="${g.d}" data-bundle="${esc(key)}" role="button" tabindex="0" aria-label="Reveal ${label}: ${esc(desc)}"><title>${esc(desc)}</title></path><g class="bundle-label" data-bundle="${esc(key)}" role="button" tabindex="0" aria-label="Reveal ${label}"><rect x="${g.x-42}" y="${g.y-9}" width="84" height="18" rx="4"/><text x="${g.x}" y="${g.y+3}">${label}</text></g></g>`;
+      html+=`<g><path class="edge-path bundled ${edges.some(e=>relatedEdges.has(`${e.source}|${e.target}`))?'related':''}" d="${g.d}" marker-end="url(#arrowhead)"/><path class="edge-hit" d="${g.d}" data-bundle="${esc(key)}" role="button" tabindex="0" aria-label="Reveal ${label}: ${esc(desc)}"><title>${esc(desc)}</title></path><g class="bundle-label" data-bundle="${esc(key)}" role="button" tabindex="0" aria-label="Reveal ${label}"><rect x="${g.x-42}" y="${g.y-9}" width="84" height="18" rx="4"/><text x="${g.x}" y="${g.y+3}">${label}</text></g></g>`;
     } else {
-      const source=project.tasks.find(t=>t.id===a),target=project.tasks.find(t=>t.id===b),chosen=key===selectedEdge,related=!selectedEdge&&[a,b].includes(selected);
+      const source=project.tasks.find(t=>t.id===a),target=project.tasks.find(t=>t.id===b),chosen=key===selectedEdge,related=relatedEdges.has(key);
       html+=`<g><path class="edge-path ${chosen?'selected':related?'related':''}" d="${g.d}" marker-end="url(#${chosen?'selected-arrow':'arrowhead'})"/><path class="edge-hit" d="${g.d}" data-edge="${esc(key)}" tabindex="0" role="button" aria-label="Connection from ${esc(source.title)} to ${esc(target.title)}"><title>${esc(source.title)} → ${esc(target.title)} (dependency)</title></path></g>`;
     }
   }
   $('#edges').innerHTML=html;
 }
 function renderGraph() {
-  const shown=new Set(visibleTasks().map(t=>t.id)),numbers=new Map(stepOutline(project).map(row=>[row.task.id,row.number]));
+  const shown=new Set(visibleTasks().map(t=>t.id));
+  const related=selected&&!selectedEdge ? dependencyPathIds(project,selected) : new Set();
+  renderStages();
   $('#nodes').innerHTML=project.tasks.map(t=>{
     const p=positionOf(t.id),size=taskSize(t),active=selected===t.id&&!selectedEdge,children=childrenOf(project,t.id),collapsed=collapsedBranches.has(t.id)||children.some(c=>!shown.has(c.id));
     const childLabel=children.length===1?'1 child':`${children.length} children`;
-    return `<article class="task-node ${t.parent_id?'child-node':''} ${active?'selected':''}" ${shown.has(t.id)?'':'hidden'} data-id="${esc(t.id)}" data-status="${esc(t.status)}" style="left:${p.x}px;top:${p.y}px;width:${size.width}px;height:${size.height}px" tabindex="0" aria-label="${esc(t.title)}, ${STATUS[t.status].label}${t.parent_id?', child step':''}" aria-roledescription="workflow step">
+    return `<article class="task-node ${t.parent_id?'child-node':''} ${active?'selected':related.has(t.id)?'related':''}" ${shown.has(t.id)?'':'hidden'} data-id="${esc(t.id)}" data-status="${esc(t.status)}" style="left:${p.x}px;top:${p.y}px;width:${size.width}px;height:${size.height}px" tabindex="0" aria-label="${esc(t.title)}, ${STATUS[t.status].label}${t.parent_id?', child step':''}" aria-roledescription="workflow step">
     <button class="port in" data-port="in" data-id="${esc(t.id)}" aria-label="Input for ${esc(t.title)}" title="Add an incoming dependency"></button>
-    <div class="task-node-header">${t.parent_id?`<span class="task-index" title="Step ${numbers.get(t.id)}">${numbers.get(t.id)}</span>`:`<button class="task-index step-number-button" data-node-action data-action="edit-number" data-id="${esc(t.id)}" aria-label="Edit step number for ${esc(t.title)}" title="Edit step number">Step ${numbers.get(t.id)}</button>`}<span class="status-pill"><span class="status-dot ${esc(t.status)}"></span>${STATUS[t.status].label}</span></div>
+    <div class="task-node-header"><span class="status-pill"><span class="status-dot ${esc(t.status)}"></span>${STATUS[t.status].label}</span></div>
     <h3 title="Double-click to rename" class="${t.title==='Untitled step'?'untitled':''}">${esc(t.title||'Untitled step')}</h3>
     <div class="node-meta"><p class="node-goal ${!t.goal?'placeholder':''}">${esc(t.goal || (t.title==='Untitled step'?'Click to name this step':''))}</p></div>
+    ${t.outputs.length?`<div class="node-output" title="${esc(`Outputs: ${t.outputs.join(', ')}`)}">${icon('file')}<span>${esc(t.outputs[0])}</span>${t.outputs.length>1?`<span class="output-more">+${t.outputs.length-1}</span>`:''}</div>`:''}
     <div class="node-hierarchy-controls">${children.length?`<button class="children-toggle ${collapsed?'is-collapsed':''}" data-node-action data-action="toggle-children" data-id="${esc(t.id)}" aria-expanded="${!collapsed}" aria-label="${collapsed?'Show':'Hide'} children of ${esc(t.title)}" title="${collapsed?'Show':'Hide'} ${descendantIds(project,t.id).size} descendant steps">${icon('chevron')}<span>${childLabel}</span></button>`:''}<button class="node-delete" data-node-action data-action="delete-card" data-id="${esc(t.id)}" aria-label="Delete step ${esc(t.title)}" title="Delete step">${icon('trash')}</button><button class="node-add-child" data-node-action data-action="add-child" data-id="${esc(t.id)}" aria-label="Add child step to ${esc(t.title)}" title="Add child step">${icon('plus')}</button></div>
     <button class="port out" data-port="out" data-id="${esc(t.id)}" aria-label="Output for ${esc(t.title)}" title="Drag to connect. An ungrouped step linked to a child joins its branch."></button></article>`;
   }).join('');
@@ -359,14 +414,14 @@ function renderMinimap() {
   const viewport=`<rect class="mini-viewport" x="${clipX}" y="${clipY}" width="${clipW}" height="${clipH}" rx="2"/>`;
   $('#minimap').innerHTML=links+viewport+cards;
 }
-function navigateMinimap(event) {
+function navigateMinimap(event,taskId=null) {
   if(!miniBounds)return;
   // Enter/Space on the whole map reveals a genuine global overview.
   if(event.detail===0) {
     collapsedBranches.clear();focusMode=false;switchView('graph');fitGraph();return;
   }
   const r=$('#minimap').getBoundingClientRect(),{minX,minY,scale,ox,oy}=miniBounds;
-  const id=event.target.closest('[data-mini-task]')?.dataset.miniTask;
+  const id=taskId || event.target.closest('[data-mini-task]')?.dataset.miniTask;
   let x,y;
   if(id) {
     const task=project.tasks.find(t=>t.id===id);if(!task)return;
@@ -384,10 +439,43 @@ function navigateMinimap(event) {
   transform.x=c.clientWidth/2-x*transform.zoom;transform.y=c.clientHeight/2-y*transform.zoom;
   applyTransform();
 }
+function startMinimapDrag(event) {
+  if(event.button!==0 || event.isPrimary===false || pointer || miniPointer || !miniBounds)return;
+  const matrix=$('#minimap').getScreenCTM();if(!matrix)return;
+  miniClick=null;
+  miniPointer={pointerId:event.pointerId,clientX:event.clientX,clientY:event.clientY,
+    inverse:matrix.inverse(),scale:miniBounds.scale,transform:{...transform},moved:false,
+    taskId:event.target.closest('[data-mini-task]')?.dataset.miniTask};
+  // Capture the stable wrapper: the SVG contents redraw on every camera movement.
+  $('#minimap-wrap').setPointerCapture(event.pointerId);
+}
+function moveMinimapDrag(event) {
+  if(!miniPointer || event.pointerId!==miniPointer.pointerId)return;
+  const drag=miniPointer,dx=event.clientX-drag.clientX,dy=event.clientY-drag.clientY;
+  if(Math.hypot(dx,dy)>3)drag.moved=true;
+  if(!drag.moved)return;
+  event.preventDefault();$('#minimap-wrap').classList.add('dragging');
+  const start=new DOMPoint(drag.clientX,drag.clientY).matrixTransform(drag.inverse);
+  const end=new DOMPoint(event.clientX,event.clientY).matrixTransform(drag.inverse);
+  transform.x=drag.transform.x-(end.x-start.x)/drag.scale*drag.transform.zoom;
+  transform.y=drag.transform.y-(end.y-start.y)/drag.scale*drag.transform.zoom;
+  applyTransform();
+}
+function finishMinimapDrag(event,cancelled=false) {
+  if(!miniPointer || event.pointerId!==miniPointer.pointerId)return;
+  miniClick={suppress:miniPointer.moved||cancelled,taskId:miniPointer.taskId};miniPointer=null;
+  const wrap=$('#minimap-wrap');wrap.classList.remove('dragging');
+  if(wrap.hasPointerCapture(event.pointerId))wrap.releasePointerCapture(event.pointerId);
+}
+function clickMinimap(event) {
+  const gesture=miniClick;miniClick=null;
+  if(event.detail!==0 && gesture?.suppress){event.preventDefault();return;}
+  navigateMinimap(event,event.detail!==0?gesture?.taskId:null);
+}
 
 function fitGraph() {
   const tasks=visibleTasks(), c=$('#canvas'); if (!tasks.length || !c.clientWidth || !c.clientHeight) return;
-  const pos=tasks.map(t=>({...positionOf(t.id),...taskSize(t)})), minX=Math.min(...pos.map(p=>p.x)), minY=Math.min(...pos.map(p=>p.y));
+  const pos=[...tasks.map(t=>({...positionOf(t.id),...taskSize(t)})),...visibleStageFrames()], minX=Math.min(...pos.map(p=>p.x)), minY=Math.min(...pos.map(p=>p.y));
   const w=Math.max(...pos.map(p=>p.x+p.width))-minX, h=Math.max(...pos.map(p=>p.y+p.height))-minY;
   const px=c.clientWidth<700?30:88, top=96, bottom=96;
   transform.zoom=Math.min(1.05,Math.max(.12,Math.min((c.clientWidth-px)/w,Math.max(90,c.clientHeight-top-bottom)/h)));
@@ -531,7 +619,7 @@ function selectEdge(key) { if(!edgeExists(key))return;key.split('|').forEach(rev
 /** Collision-aware placement uses each node's actual size, never a visual scale. */
 function freeStepPosition(preferred,size={width:NODE_W,height:NODE_H},nearParent=false) {
   const c=$('#canvas'),gap=26,dx=size.width+gap,dy=size.height+gap;
-  const free=p=>project.tasks.every(t=>{const q=positionOf(t.id),s=taskSize(t);return p.x+size.width+gap<=q.x||q.x+s.width+gap<=p.x||p.y+size.height+gap<=q.y||q.y+s.height+gap<=p.y;});
+  const free=p=>project.tasks.every(t=>{const q=project.layout.positions[t.id],s=taskSize(t);return !q||p.x+size.width+gap<=q.x||q.x+s.width+gap<=p.x||p.y+size.height+gap<=q.y||q.y+s.height+gap<=p.y;});
   const onScreen=p=>{const x=p.x*transform.zoom+transform.x,y=p.y*transform.zoom+transform.y;return x>=20&&x+size.width*transform.zoom<=c.clientWidth-20&&y>=85&&y+size.height*transform.zoom<=c.clientHeight-75;};
   let fallback=null;
   for(let ring=0;ring<=32;ring++) {
@@ -559,8 +647,8 @@ function addBlankStep(dependency=null,at=null,parent=null) {
     closeInspector();
     if(wasList){$('#canvas').hidden=false;$('#list-view').hidden=true;view='graph';}
     let preferred=at?{x:at.x-size.width/2,y:at.y-size.height/2}:null;
-    if(explicitChild){const q=positionOf(parent),ps=taskSize(project.tasks.find(t=>t.id===parent));preferred={x:q.x+(ps.width-size.width)/2,y:q.y+ps.height+86};}
-    if(!preferred&&dependency){const q=positionOf(dependency),ps=taskSize(project.tasks.find(t=>t.id===dependency));preferred={x:q.x+ps.width+90,y:q.y};}
+    if(explicitChild){const q=project.layout.positions[parent],ps=taskSize(project.tasks.find(t=>t.id===parent));preferred={x:q.x+(ps.width-size.width)/2,y:q.y+ps.height+86};}
+    if(!preferred&&dependency){const q=project.layout.positions[dependency],ps=taskSize(project.tasks.find(t=>t.id===dependency));preferred={x:q.x+ps.width+90,y:q.y};}
     if(!preferred){const b=c.getBoundingClientRect(),q=pointInWorld(b.left+b.width/2,b.top+b.height/2);preferred={x:q.x-size.width/2,y:q.y-size.height/2};}
     const result=insertBlankStep(project,freeStepPosition(preferred,size,explicitChild),dependency,parent);
     if(change(()=>result.document,{validate:true})) {
@@ -646,11 +734,11 @@ async function loadDisk() {
   } catch(error){toast(error.message,true);}
 }
 async function checkExternal() {
-  if(!['server','error'].includes(mode)||busy||pollBusy||pointer||document.hidden||$('dialog[open]'))return;
+  if(!['server','error'].includes(mode)||busy||pollBusy||pointer||miniPointer||document.hidden||$('dialog[open]'))return;
   pollBusy=true;
   try {
     const data=await request('/api/project');
-    if($('dialog[open]')||pointer)return;
+    if($('dialog[open]')||pointer||miniPointer)return;
     if(data.revision!==revision) {
       if(dirty()&&mode==='server')alertFile('This project was edited elsewhere. Your unsaved changes are still here.',true);
       else {
@@ -663,6 +751,10 @@ async function checkExternal() {
   finally{pollBusy=false;}
 }
 function switchView(which) {view=which;$('#canvas').hidden=view!=='graph';$('#list-view').hidden=view!=='list';if(view==='list')focusMode=false;refresh(false);}
+function setLayoutMode(which) {
+  if(!['stages','freeform'].includes(which)||which===layoutMode)return;
+  layoutMode=which;lastGroup='';connectFrom=null;refresh(false);fitGraph();
+}
 const actions={
   overview:()=>{focusMode=false;connectFrom=null;selectedEdge=null;switchView('graph');if(!selected)closeInspector();else renderInspector();fitGraph();},
   focus:()=>{if(!currentTask())return;selectedEdge=null;focusMode=!focusMode;switchView('graph');renderInspector();fitGraph();},
@@ -670,14 +762,14 @@ const actions={
   'close-inspector':closeInspector,
   'inspector-tab':el=>{inspectorTab=el.dataset.tab;renderInspector();$(`#${inspectorTab==='plan'?'plan':'resources'}-tab`).focus();},
   select:el=>navigateTo(el.dataset.id),
-  'edit-number':el=>{inspectorTab='plan';navigateTo(el.dataset.id);const input=$('#step-number');input?.focus();input?.select();},
   'add-child':el=>addBlankStep(null,null,el.dataset.id||selected),
   'toggle-children':el=>toggleBranch(el.dataset.id||selected),
   save, reload:loadDisk,
   add:()=>addBlankStep(), 'add-after':()=>addBlankStep(selected),
   'view-list':()=>switchView('list'),
+  'set-layout':el=>setLayoutMode(el.dataset.layout),
   'toggle-map':()=>{mapOpen=!mapOpen;renderHeader();renderMinimap();},
-  layout:()=>{if(change(doc=>autoLayout(validateProject(doc)),{validate:true}))fitGraph();},
+  layout:()=>{if(layoutMode==='stages'){refresh(false);fitGraph();}else if(change(doc=>autoLayout(validateProject(doc)),{validate:true}))fitGraph();},
   fit:fitGraph,'zoom-in':()=>zoom(1.15),'zoom-out':()=>zoom(1/1.15),'zoom-reset':()=>zoom(1/transform.zoom),undo,redo,
   'remove-dependency':el=>removeEdge(el.dataset.source,el.dataset.target),
   'delete-edge':()=>{if(selectedEdge)removeEdge(...selectedEdge.split('|'));},
@@ -716,6 +808,12 @@ $('#inspector').addEventListener('change',e=>{if(e.target.id==='add-dependency'&
 $('#inspector').addEventListener('submit',e=>{if(e.target.id==='connection-form'){e.preventDefault();editEdge($('#connection-source').value,$('#connection-target').value);}});
 $('#inspector').addEventListener('keydown',e=>{if(e.target.matches('[role="tab"]')&&['ArrowLeft','ArrowRight'].includes(e.key)){e.preventDefault();inspectorTab=inspectorTab==='plan'?'resources':'plan';renderInspector();$(`#${inspectorTab==='plan'?'plan':'resources'}-tab`).focus();}});
 $('#list-view').addEventListener('change',e=>{if(e.target.dataset.tableStatus)change(doc=>{doc.tasks.find(t=>t.id===e.target.dataset.tableStatus).status=e.target.value;});});
+$('#layout-control').addEventListener('keydown',e=>{
+  if(!e.target.matches('[data-layout]')||!['ArrowLeft','ArrowRight','Home','End'].includes(e.key))return;
+  e.preventDefault();
+  const which=['ArrowLeft','Home'].includes(e.key)?'stages':'freeform';
+  setLayoutMode(which);$(`#layout-${which}`).focus();
+});
 const canvas=$('#canvas');
 // Keep navigation controls fixed when keyboard focus reaches off-screen cards.
 canvas.addEventListener('focusin',event=>{const node=event.target.closest('.task-node');if(node&&!pointer)keepSelectedVisible(node.dataset.id);});
@@ -733,7 +831,7 @@ canvas.addEventListener('pointerdown',event=>{
   } else if(connectFrom&&node){connect(connectFrom,node.dataset.id);event.preventDefault();return;}
   else if(port?.dataset.port==='in'){event.preventDefault();return;}
   else if(edge){selectEdge(edge.dataset.edge);event.preventDefault();return;}
-  else if(node){const p=positionOf(node.dataset.id);pointer={type:'node',id:node.dataset.id,x:p.x,y:p.y,clientX:event.clientX,clientY:event.clientY,before:clone(project),moved:false};}
+  else if(node){const p=positionOf(node.dataset.id);pointer={type:'node',id:node.dataset.id,x:p.x,y:p.y,clientX:event.clientX,clientY:event.clientY,before:clone(project),layoutMode,moved:false};}
   else{pointer={type:'pan',x:transform.x,y:transform.y,clientX:event.clientX,clientY:event.clientY,moved:false};canvas.classList.add('panning');}
   if(lastNodeClick && performance.now()-lastNodeClick.time<500 && Math.hypot(event.clientX-lastNodeClick.x,event.clientY-lastNodeClick.y)<8 && ['node','pan'].includes(pointer.type))pointer.renameId=lastNodeClick.id;
   canvas.setPointerCapture(event.pointerId);event.preventDefault();
@@ -744,7 +842,8 @@ canvas.addEventListener('pointermove',event=>{
   if(Math.abs(dx)+Math.abs(dy)>3)pointer.moved=true;
   if(pointer.type==='pan'){transform.x=pointer.x+dx;transform.y=pointer.y+dy;applyTransform();}
   if(pointer.type==='node'&&pointer.moved){
-    project=moveBranch(pointer.before,pointer.id,dx/transform.zoom,dy/transform.zoom);
+    if(!pointer.moveBase){pointer.moveBase=startFreeformMove(clone(pointer.before));renderStages();renderHeader();}
+    project=moveBranch(pointer.moveBase,pointer.id,dx/transform.zoom,dy/transform.zoom);
     for(const id of [pointer.id,...descendantIds(project,pointer.id)]){const p=positionOf(id),el=$(`.task-node[data-id="${id}"]`);if(el){el.style.left=`${p.x}px`;el.style.top=`${p.y}px`;el.classList.add('dragging');}}renderEdges();renderMinimap();
   }
   if(pointer.type==='connect'&&pointer.moved){
@@ -764,7 +863,7 @@ function finishPointer(event,cancelled=false){
     // A click leaves a keyboard/touch-friendly pending connection.
   }
   if(action.type==='node'){
-    if(action.moved){if(cancelled)project=action.before;else remember(action.before);}
+    if(action.moved){if(cancelled){project=action.before;layoutMode=action.layoutMode;}else remember(action.before,'',action.layoutMode);}
     else if(!cancelled){lastNodeClick={id:action.id,x:event.clientX,y:event.clientY,time:performance.now()};navigateTo(action.id);}
   }
   if(action.type==='pan'&&!action.moved&&!cancelled){connectFrom=null;selectedEdge=null;if(!focusMode)selected=null;closeInspector();}
@@ -780,7 +879,12 @@ canvas.addEventListener('dblclick',event=>{
   if(id)renameStep(id);else addBlankStep(null,pointInWorld(event.clientX,event.clientY));
 });
 canvas.addEventListener('wheel',e=>{if(controlTarget(e.target))return;e.preventDefault();const r=canvas.getBoundingClientRect();if(e.shiftKey){transform.x-=e.deltaY;transform.y-=e.deltaX;applyTransform();}else zoom(Math.exp(-e.deltaY*.0015),e.clientX-r.left,e.clientY-r.top);},{passive:false});
-$('#minimap-wrap').addEventListener('click',navigateMinimap);
+$('#minimap-wrap').addEventListener('pointerdown',startMinimapDrag);
+$('#minimap-wrap').addEventListener('pointermove',moveMinimapDrag);
+$('#minimap-wrap').addEventListener('pointerup',finishMinimapDrag);
+$('#minimap-wrap').addEventListener('pointercancel',event=>finishMinimapDrag(event,true));
+$('#minimap-wrap').addEventListener('lostpointercapture',event=>finishMinimapDrag(event,true));
+$('#minimap-wrap').addEventListener('click',clickMinimap);
 $('#delete-step-dialog').addEventListener('close',()=>{if(!$('#delete-step-dialog').open)pendingDeletion=null;});
 
 document.addEventListener('keydown',e=>{
@@ -803,7 +907,7 @@ document.addEventListener('keydown',e=>{
   if(['Enter',' '].includes(e.key)&&e.target.matches('[data-edge]')){e.preventDefault();selectEdge(e.target.dataset.edge);$('#connection-source')?.focus();}
   if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)&&e.target.matches('.task-node')){
     e.preventDefault();const id=e.target.dataset.id,amount=e.shiftKey?40:10;
-    change(doc=>moveBranch(doc,id,e.key==='ArrowRight'?amount:e.key==='ArrowLeft'?-amount:0,e.key==='ArrowDown'?amount:e.key==='ArrowUp'?-amount:0),{group:`move-${id}`,inspector:false});
+    change(doc=>moveBranch(startFreeformMove(doc),id,e.key==='ArrowRight'?amount:e.key==='ArrowLeft'?-amount:0,e.key==='ArrowDown'?amount:e.key==='ArrowUp'?-amount:0),{group:`move-${id}`,inspector:false});
     $$('.task-node').find(n=>n.dataset.id===id)?.focus();
   }
 });
