@@ -10,6 +10,7 @@ own machine or Linux server.
 
 ## Features
 
+- **Dependency stages** — group steps automatically from left to right, with independent steps together; switch to freeform to use your saved arrangement.
 - **Canvas editing** — arrange, connect, rename, and delete steps directly on the canvas.
 - **Nested branches** — organize numbered steps and children, with an indented list view.
 - **Focus and overview** — zoom into a branch or navigate the whole project with the minimap.

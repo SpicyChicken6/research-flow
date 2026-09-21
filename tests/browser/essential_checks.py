@@ -12,7 +12,7 @@ OUT=ROOT/'test-results';OUT.mkdir(exist_ok=True)
 HTML=(ROOT/'dist/research-flow.html').read_text()
 CLASSIC=json.loads((ROOT/'tests/fixtures/classic-project.json').read_text())
 HTML=re.sub(r'(<script id="initial-project" type="application/json">).*?(</script>)',lambda m:m[1]+json.dumps(CLASSIC)+m[2],HTML,flags=re.S)
-CHECKS=[]; ERRORS=[]
+CHECKS=[]; ERRORS=[]; LAST_DOWNLOAD=0.0
 def check(value,label):
     if not value: raise AssertionError(label)
     CHECKS.append(label);print('PASS',label,flush=True)
@@ -24,6 +24,11 @@ def open_page(browser,html=HTML,width=1600,height=1000):
     expect(pg.locator('#save-button')).to_be_enabled()
     return pg
 def snapshot(pg):
+    global LAST_DOWNLOAD
+    # Pace exported snapshots so Chromium's download burst limiter does not drop them.
+    pause=1-(time.monotonic()-LAST_DOWNLOAD)
+    if pause>0: pg.wait_for_timeout(pause*1000)
+    LAST_DOWNLOAD=time.monotonic()
     pg.locator('#more-menu summary').click()
     with pg.expect_download() as dl: pg.locator('[data-action="export-json"]').click()
     return json.loads(Path(dl.value.path()).read_text())
@@ -160,7 +165,8 @@ def run():
     check(pg.locator('#minimap-wrap').is_visible(),'global minimap can be restored')
     prev=pg.locator('#world').get_attribute('style');pg.locator('#minimap-wrap').click(position={'x':35,'y':50})
     check(prev!=pg.locator('#world').get_attribute('style'),'minimap click navigates the canvas')
-    pg.locator('[data-action=layout]').click()
+    # Manual arrangement edits saved coordinates only in Freeform.
+    pg.locator('#layout-freeform').click();pg.locator('[data-action=layout]').click()
     arranged=snapshot(pg);check(arranged['layout']['positions']!=added['layout']['positions'],'Arrange steps is available directly on the canvas')
     pg.locator('#project-title').fill('Our project');pg.locator('#project-title').press('Enter')
     check(snapshot(pg)['project']['name']=='Our project' and pg.locator('#project-title').evaluate('el=>getComputedStyle(el).textTransform')=='uppercase','uppercase title styling does not alter the saved project name')
