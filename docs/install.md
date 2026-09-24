@@ -1,8 +1,9 @@
 # Install Research Flow
 
-Research Flow 0.8.6 installs a `research-flow` command. It runs a small Python server
-and serves the existing browser interface. Linux needs Python 3.10+; Node, a source
-checkout, and a server-side desktop are not required to run the installed app.
+Research Flow 0.8.7 installs a `research-flow` command, including `--update`. It runs
+a small Python server and serves the existing browser interface. Linux needs
+Python 3.10+; Node, a source checkout, and a server-side desktop are not required to
+run the installed app.
 
 ## Install with pipx
 
@@ -17,7 +18,7 @@ sudo apt install pipx python3-venv
 Then install Research Flow as your regular user:
 
 ```bash
-pipx install https://github.com/SpicyChicken6/research-flow/releases/download/v0.8.6/research_flow-0.8.6-py3-none-any.whl
+pipx install https://github.com/SpicyChicken6/research-flow/releases/download/v0.8.7/research_flow-0.8.7-py3-none-any.whl
 pipx ensurepath
 ```
 
@@ -130,7 +131,7 @@ Create a dedicated virtual environment, then install the release into it:
 ```bash
 python3 -m venv "$HOME/.local/share/research-flow-env"
 "$HOME/.local/share/research-flow-env/bin/python" -m pip install \
-  https://github.com/SpicyChicken6/research-flow/releases/download/v0.8.6/research_flow-0.8.6-py3-none-any.whl
+  https://github.com/SpicyChicken6/research-flow/releases/download/v0.8.7/research_flow-0.8.7-py3-none-any.whl
 "$HOME/.local/share/research-flow-env/bin/research-flow" --project "$HOME/research/my-study/workflow.yaml" --init
 ```
 
@@ -167,15 +168,15 @@ install it with pipx or use a Git clone for future updates.
 Editable pipx checkouts require a manual Git update and editable pipx reinstall;
 `--update` stops before changing those installations.
 
-**Older versions without `--update`:** install the repository version once:
+**Older versions without `--update`:** install this release once:
 
 ```bash
-pipx install --force https://github.com/SpicyChicken6/research-flow/archive/refs/heads/main.zip
+pipx install --force https://github.com/SpicyChicken6/research-flow/releases/download/v0.8.7/research_flow-0.8.7-py3-none-any.whl
 ```
 
 For a dedicated virtual environment, use its Python with
-`-m pip install --upgrade --force-reinstall --no-cache-dir` and the same archive
-URL. The new `--update` option is available once the change is merged into `main`.
+`-m pip install --upgrade --force-reinstall --no-cache-dir` and the same wheel
+URL. Releases starting with 0.8.7 include `--update` for future updates.
 
 To install a specific release instead, download its wheel from
 [Releases](https://github.com/SpicyChicken6/research-flow/releases), then use
