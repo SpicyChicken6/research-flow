@@ -23,7 +23,7 @@ def run(executable):
         env = {k: v for k, v in os.environ.items() if k != 'PYTHONPATH'}
         env['XDG_DATA_HOME'] = str(work / 'default data')
         version = subprocess.check_output([executable, '--version'], cwd=work, env=env, text=True)
-        assert version.strip() == 'Research Flow 0.8.6', version
+        assert version.strip() == 'Research Flow 0.8.7', version
         for scenario in ('explicit', 'empty', 'existing'):
             cwd = work / scenario
             cwd.mkdir()

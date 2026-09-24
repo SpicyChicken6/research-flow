@@ -22,7 +22,7 @@ from urllib.parse import urlsplit
 import yaml
 
 ROOT = Path(__file__).resolve().parent
-VERSION = "0.8.6"
+VERSION = "0.8.7"
 DEFAULT_PORT = 8765
 MAX_BYTES = 2_000_000
 STATUSES = {'todo', 'in_progress', 'blocked', 'done'}

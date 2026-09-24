@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.8.7 — self-updates and dependency stages
 
 - Add `research-flow --update` to install the latest official `main` code through
   pipx, the current Python environment, or a clean source checkout. Updating exits
@@ -8,6 +8,10 @@
 - When default port 8765 is occupied, try successive ports and warn with the
   selected port. The private URL, local browser launch, and forwarding instructions
   use the bound port; other explicit ports retain their fixed-port behavior.
+- Organize steps into dependency stages by default, with a Freeform view that
+  restores saved positions. Switching views does not change workflow data.
+- Highlight upstream and downstream dependency paths for the selected step and
+  improve canvas navigation, keyboard controls, and minimap behavior.
 
 ## 0.8.6 — default to creating a workflow
 
