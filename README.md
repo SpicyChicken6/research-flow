@@ -17,6 +17,7 @@ own machine or Linux server.
 - **Details in one place** — track each step's status, goals, notes, inputs, and outputs.
 - **Undo and redo** — revisit changes as your plan evolves.
 - **Your files, your workflow** — save to YAML with previous-version backups and protection against conflicting edits.
+- **Preview beside your workflow** — each Save refreshes a standalone SVG of the full graph, ready to view without launching the app.
 
 ## Quick start
 
@@ -36,6 +37,18 @@ research-flow
 
 Open the private URL printed in the terminal. Keep the app running and click
 **Save** to write your changes to the selected YAML file.
+
+Saving `workflow.yaml` also creates or updates `workflow.svg` in the same folder
+on the machine running Research Flow. The image uses the current Stages or
+Freeform layout and includes all branches, even when focused or collapsed in the
+editor. Open the SVG directly, or embed it in a Markdown file with
+`![Workflow](workflow.svg)`. Opening a workflow does not create or update a preview.
+
+If the preview cannot be written, your YAML still saves: the app shows
+**Saved · preview unavailable** and lets you retry with **Save**. An existing SVG
+that was not generated for this workflow is preserved; move it aside before retrying.
+Portable HTML's **Save copy** continues to download an editable HTML file; the
+automatic SVG is created when saving through the running app.
 
 - **One YAML/YML file in the folder:** opens it.
 - **No YAML files:** asks before creating `workflow.yaml` (default: Yes).

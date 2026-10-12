@@ -4,6 +4,9 @@
 /project.json
 /workflow.yaml
 /workflow.yml
+# Generated previews beside workflows in the source root or examples.
+/*.svg
+/examples/*.svg
 /data/
 /projects/
 .research-flow/

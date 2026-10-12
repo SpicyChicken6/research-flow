@@ -129,6 +129,7 @@ let miniPointer = null, miniClick = null;
 let history = [], future = [], lastGroup = '', groupTime = 0;
 let busy = false, conflict = false, serverError = false, pollBusy = false;
 let copyDownloaded = false, inspectorSelection = null;
+let previewWarning = null;
 const logoMotion = createLogoMotion($('.brand-logo'));
 let lastLogoView = null;
 const dirty = () => JSON.stringify(project) !== baseline;
@@ -275,12 +276,12 @@ function renderHeader() {
   lastLogoView = logoView;
   if (document.activeElement !== $('#project-title')) $('#project-title').value=project.project.name || '';
   document.title = `${project.project.name || 'Untitled project'} · Research Flow`;
-  const label = busy ? 'Saving…' : mode === 'loading' ? 'Connecting…' : mode === 'error' ? 'File unavailable' : conflict ? 'File changed' : dirty() ? 'Unsaved changes' : mode === 'server' ? 'Saved' : copyDownloaded ? 'Copy downloaded' : 'In this tab';
+  const label = busy ? 'Saving…' : mode === 'loading' ? 'Connecting…' : mode === 'error' ? 'File unavailable' : conflict ? 'File changed' : dirty() ? 'Unsaved changes' : mode === 'server' ? (previewWarning ? 'Saved · preview unavailable' : 'Saved') : copyDownloaded ? 'Copy downloaded' : 'In this tab';
   $('#save-state').innerHTML = `${dirty() ? '<span class="save-dot dirty"></span>' : ''}${label}`;
-  $('#save-state').title = mode === 'server' ? filePath : 'Preview changes live in this tab. Save copy downloads a reopenable HTML with your edits.';
+  $('#save-state').title = mode === 'server' ? (previewWarning || filePath) : 'Preview changes live in this tab. Save copy downloads a reopenable HTML with your edits.';
   $('#save-button').textContent = busy ? 'Saving…' : mode === 'server' ? 'Save' : 'Save copy';
-  $('#save-button').title = mode === 'server' ? 'Save to this project · ⌘/Ctrl S' : 'Download an editable HTML copy of this project · ⌘/Ctrl S';
-  $('#save-button').disabled = busy || ['loading','error'].includes(mode) || (mode === 'server' && (conflict || !dirty()));
+  $('#save-button').title = mode === 'server' ? (previewWarning ? 'Retry saving the SVG preview · ⌘/Ctrl S' : 'Save workflow and SVG preview · ⌘/Ctrl S') : 'Download an editable HTML copy of this project · ⌘/Ctrl S';
+  $('#save-button').disabled = busy || ['loading','error'].includes(mode) || (mode === 'server' && (conflict || (!dirty() && !previewWarning)));
   $('#add-button').disabled = ['loading','error'].includes(mode) || project.tasks.length>=500;
   $('#undo-button').disabled = !history.length; $('#redo-button').disabled = !future.length;
   $('#focus-button').hidden = !currentTask() || view !== 'graph';
@@ -718,10 +719,11 @@ async function save() {
       download(name,portableHtml(snapshot),'text/html');baseline=JSON.stringify(snapshot);copyDownloaded=true;renderHeader();toast('Editable copy downloaded. Reopen it to continue.');return;
     }
     if(conflict){toast('The file changed. Keep a draft copy, then reload this project.',true);return;}
-    if(!dirty())return;
+    if(!dirty()&&!previewWarning)return;
     busy=true;renderHeader();
-    const data=await request('/api/project',{method:'PUT',body:JSON.stringify({document:snapshot,revision})});
-    revision=data.revision;baseline=JSON.stringify(snapshot);filePath=data.file;serverError=false;alertFile('');
+    const data=await request('/api/project',{method:'PUT',body:JSON.stringify({document:snapshot,revision,preview_layout:layoutMode})});
+    revision=data.revision;baseline=JSON.stringify(snapshot);filePath=data.file;serverError=false;previewWarning=data.preview_warning||null;alertFile('');
+    if(previewWarning)toast(previewWarning,true);
   } catch(error) {if(error.status===409)alertFile(error.message,true);toast(error.message||'Save failed. Your draft is unchanged.',true);}
   finally {busy=false;renderHeader();}
 }
@@ -730,7 +732,7 @@ async function loadDisk() {
   if(dirty()&&!confirm('Reload this project and discard unsaved changes in this tab? Keep a draft copy first to preserve them.'))return;
   try {
     const data=await request('/api/project');project=ensurePositions(validateProject(data.document));baseline=JSON.stringify(project);revision=data.revision;filePath=data.file;
-    mode='server';serverError=false;history=[];future=[];alertFile('');refresh();
+    mode='server';serverError=false;previewWarning=null;history=[];future=[];alertFile('');refresh();
   } catch(error){toast(error.message,true);}
 }
 async function checkExternal() {
@@ -743,7 +745,7 @@ async function checkExternal() {
       if(dirty()&&mode==='server')alertFile('This project was edited elsewhere. Your unsaved changes are still here.',true);
       else {
         project=ensurePositions(validateProject(data.document));baseline=JSON.stringify(project);revision=data.revision;filePath=data.file;history=[];future=[];
-        mode='server';serverError=false;alertFile('');refresh();
+        mode='server';serverError=false;previewWarning=null;alertFile('');refresh();
         $('#project-title').value=project.project.name;
       }
     } else if(serverError){serverError=false;alertFile('');}

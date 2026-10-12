@@ -104,6 +104,7 @@ class UpdateCLITests(unittest.TestCase):
         # Run the source entrypoint in a fresh interpreter. The stub ensures even
         # a parser regression cannot reach the network or change this checkout.
         runner = '''
+import os
 import runpy
 import sys
 import types
@@ -114,6 +115,8 @@ def forbidden_update(*args, **kwargs):
 stub.update_installation = forbidden_update
 sys.modules['updater'] = stub
 sys.argv = sys.argv[1:]
+# Match direct script execution, including imports beside server.py.
+sys.path.insert(0, os.path.dirname(sys.argv[0]))
 runpy.run_path(sys.argv[0], run_name='__main__')
 '''
         with tempfile.TemporaryDirectory() as temp:
