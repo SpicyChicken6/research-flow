@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Generate a standalone SVG beside the YAML on each server Save, showing the full
+  workflow in the selected Stages or Freeform layout. Preview errors leave saved
+  workflow data intact and offer a retry; unrelated SVG files are preserved.
+
 ## 0.8.7 — self-updates and dependency stages
 
 - Add `research-flow --update` to install the latest official `main` code through

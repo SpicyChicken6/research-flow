@@ -2,7 +2,9 @@
 """Single-project Research Flow server for loopback access through an SSH tunnel."""
 from __future__ import annotations
 import argparse
+from contextlib import ExitStack
 import errno
+import fcntl
 import hashlib
 import json
 import math
@@ -20,6 +22,11 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
 import yaml
+
+if __package__:
+    from .workflow_plot import render_workflow_svg
+else:
+    from workflow_plot import render_workflow_svg
 
 ROOT = Path(__file__).resolve().parent
 VERSION = "0.8.7"
@@ -230,7 +237,103 @@ class ProjectStore:
             raise ValidationError('Project files must be under 2 MB.')
         text = raw.decode('utf-8')
         return {'document': parse_project(text), 'revision': revision(raw), 'yaml': text, 'file': str(self.path)}
-    def save(self, document, expected_revision):
+    def _refresh_open_preview(self, source, content, mode):
+        """Refresh the verified inode, with best-effort rollback on write failure."""
+        source.seek(0)
+        original = source.read()
+        original_mode = stat.S_IMODE(os.fstat(source.fileno()).st_mode)
+
+        def write_content(data):
+            source.seek(0)
+            remaining = memoryview(data)
+            while remaining:
+                written = source.write(remaining)
+                if not written:
+                    raise OSError('Could not finish writing the SVG preview.')
+                remaining = remaining[written:]
+            source.truncate(len(data))
+            source.flush()
+            os.fsync(source.fileno())
+
+        try:
+            os.fchmod(source.fileno(), mode)
+            write_content(content)
+        except OSError as error:
+            try:
+                write_content(original)
+                os.fchmod(source.fileno(), original_mode)
+            except OSError:
+                raise OSError('Could not restore the previous SVG after a write failure; '
+                              'the generated preview may be incomplete. Retry Save.') from error
+            raise
+
+    def _write_preview(self, document, layout_mode, saved_revision):
+        """Publish a new sidecar or refresh its verified, locked file descriptor."""
+        path = self.path.with_suffix('.svg')
+        if path == self.path:
+            raise ValueError('The workflow itself uses the .svg filename.')
+        marker = f'<!-- research-flow-preview source-sha256:{revision(self.path.name.encode("utf-8"))} -->\n'.encode('ascii')
+
+        def signature(info):
+            return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns,
+                    info.st_ctime_ns, info.st_nlink)
+
+        with ExitStack() as stack:
+            source = None
+            try:
+                info = path.lstat()
+            except FileNotFoundError:
+                info = None
+            if info is not None:
+                if not stat.S_ISREG(info.st_mode):
+                    raise ValueError(f'{path.name} is not a regular generated preview.')
+                # Never truncate on open or reopen by pathname after validation.
+                # NONBLOCK prevents a raced-in FIFO from hanging the save request.
+                fd = os.open(path, os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK)
+                source = stack.enter_context(os.fdopen(fd, 'r+b', buffering=0))
+                opened = os.fstat(source.fileno())
+                if not stat.S_ISREG(opened.st_mode) or opened.st_nlink != 1:
+                    raise ValueError(f'{path.name} must be a regular preview without hard links.')
+                fcntl.flock(source.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                if (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino) or source.read(len(marker)) != marker:
+                    raise ValueError(f'{path.name} already exists and is not this workflow’s generated preview.')
+                before = signature(os.fstat(source.fileno()))
+            content = marker + render_workflow_svg(document, layout_mode=layout_mode).encode('utf-8')
+            mode = self.path.stat().st_mode & 0o666
+            if revision(self.path.read_bytes()) != saved_revision:
+                raise ValueError('The workflow changed on disk before its preview was ready.')
+            if source is not None:
+                if signature(path.lstat()) != before or signature(os.fstat(source.fileno())) != before:
+                    raise ValueError(f'{path.name} changed while its preview was being generated.')
+                # A later pathname replacement cannot redirect these writes. Existing
+                # refreshes are in-place; the lock serializes cooperating writers.
+                self._refresh_open_preview(source, content, mode)
+                after = path.lstat()
+                held = os.fstat(source.fileno())
+                if not stat.S_ISREG(after.st_mode) or (after.st_dev, after.st_ino) != (held.st_dev, held.st_ino):
+                    raise ValueError(f'{path.name} was replaced while its preview was being updated.')
+            else:
+                temp_path = None
+                try:
+                    fd, temp_path = tempfile.mkstemp(prefix=f'.{path.name}.', suffix='.tmp', dir=path.parent)
+                    with os.fdopen(fd, 'wb') as out:
+                        out.write(content)
+                        out.flush()
+                        os.fsync(out.fileno())
+                    os.chmod(temp_path, mode)
+                    if revision(self.path.read_bytes()) != saved_revision:
+                        raise ValueError('The workflow changed on disk before its preview was ready.')
+                    # New previews appear complete, and cannot clobber a concurrently
+                    # created file. Existing previews never use pathname replacement.
+                    os.link(temp_path, path)
+                finally:
+                    if temp_path:
+                        Path(temp_path).unlink(missing_ok=True)
+        return str(path)
+
+    def save(self, document, expected_revision, *, preview_layout='stages'):
+        if preview_layout not in ('stages', 'freeform'):
+            raise ValidationError('Preview layout must be stages or freeform.')
         document = validate_project(document)
         content = yaml.safe_dump(document, allow_unicode=True, sort_keys=False, width=100).encode('utf-8')
         if len(content) > MAX_BYTES:
@@ -239,31 +342,42 @@ class ProjectStore:
             current = self.path.read_bytes()
             if not isinstance(expected_revision, str) or revision(current) != expected_revision:
                 raise ConflictError('The file changed on disk. Download your draft, then reload the file before saving.')
-            backups = self.path.parent / '.research-flow' / 'backups' / self.path.name
-            backups.mkdir(parents=True, exist_ok=True, mode=0o700)
-            backup = backups / f'{time.time_ns()}.yaml'
-            with backup.open('xb') as out:
-                out.write(current)
-            os.chmod(backup, 0o600)
-            temp_path = None
-            try:
-                fd, temp_path = tempfile.mkstemp(prefix=f'.{self.path.name}.', suffix='.tmp', dir=self.path.parent)
-                with os.fdopen(fd, 'wb') as out:
-                    out.write(content)
-                    out.flush()
-                    os.fsync(out.fileno())
-                os.chmod(temp_path, self.path.stat().st_mode & 0o777)
-                # Protect against common editor/agent writes during this save, too.
-                if revision(self.path.read_bytes()) != expected_revision:
-                    raise ConflictError('The file changed during the save. Reload before trying again.')
-                os.replace(temp_path, self.path)
+            # Retrying a failed preview must not rotate away useful YAML backups.
+            if content != current:
+                backups = self.path.parent / '.research-flow' / 'backups' / self.path.name
+                backups.mkdir(parents=True, exist_ok=True, mode=0o700)
+                backup = backups / f'{time.time_ns()}.yaml'
+                with backup.open('xb') as out:
+                    out.write(current)
+                os.chmod(backup, 0o600)
                 temp_path = None
-            finally:
-                if temp_path:
-                    Path(temp_path).unlink(missing_ok=True)
-            for old in sorted(backups.glob('*.yaml'))[:-20]:
-                old.unlink(missing_ok=True)
-            return self.read()
+                try:
+                    fd, temp_path = tempfile.mkstemp(prefix=f'.{self.path.name}.', suffix='.tmp', dir=self.path.parent)
+                    with os.fdopen(fd, 'wb') as out:
+                        out.write(content)
+                        out.flush()
+                        os.fsync(out.fileno())
+                    os.chmod(temp_path, self.path.stat().st_mode & 0o777)
+                    # Protect against common editor/agent writes during this save, too.
+                    if revision(self.path.read_bytes()) != expected_revision:
+                        raise ConflictError('The file changed during the save. Reload before trying again.')
+                    os.replace(temp_path, self.path)
+                    temp_path = None
+                finally:
+                    if temp_path:
+                        Path(temp_path).unlink(missing_ok=True)
+                for old in sorted(backups.glob('*.yaml'))[:-20]:
+                    old.unlink(missing_ok=True)
+            saved = {'document': document, 'revision': revision(content),
+                     'yaml': content.decode('utf-8'), 'file': str(self.path),
+                     'preview_file': None, 'preview_warning': None}
+            try:
+                saved['preview_file'] = self._write_preview(document, preview_layout, saved['revision'])
+            except (OSError, ValueError, UnicodeError) as error:
+                # YAML is already committed: never report this as a failed save or
+                # leave the client holding an obsolete revision after a preview error.
+                saved['preview_warning'] = f'Workflow saved, but the SVG preview was not updated: {error}'
+            return saved
 
 STATIC = {'/': ('index.html', 'text/html; charset=utf-8'), '/index.html': ('index.html', 'text/html; charset=utf-8'),
           '/app.js': ('app.js', 'text/javascript; charset=utf-8'), '/model.mjs': ('model.mjs', 'text/javascript; charset=utf-8'),
@@ -348,7 +462,8 @@ def make_handler(store, *, auth_token=None, browser_port=None):
                     result = parse_project(payload.get('yaml'))
                     self.send_json(200, {'document': result})
                 elif method == 'PUT' and path == '/api/project':
-                    self.send_json(200, store.save(payload.get('document'), payload.get('revision')))
+                    self.send_json(200, store.save(payload.get('document'), payload.get('revision'),
+                                                   preview_layout=payload.get('preview_layout', 'stages')))
                 else:
                     self.send_json(404, {'error': 'Not found.'})
             except ConflictError as error:

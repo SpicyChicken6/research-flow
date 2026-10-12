@@ -14,6 +14,7 @@ import sys
 import tempfile
 import threading
 from urllib.parse import urlsplit
+import xml.etree.ElementTree as ET
 
 
 def run(executable):
@@ -84,16 +85,26 @@ def run(executable):
                 snapshot = json.loads(data)
                 assert Path(snapshot['file']) == project.resolve()
                 assert snapshot['document']['tasks'] == []
+                preview = project.with_suffix('.svg')
+                assert not preview.exists(), 'Opening a workflow must not generate a preview'
                 if original is not None:
                     assert project.read_bytes() == original, 'Opening an existing workflow must not rewrite it'
                     assert snapshot['document']['custom'] == 'preserved'
                 snapshot['document']['project']['name'] = 'Installed app saved this'
-                status, _ = request('PUT', '/api/project', snapshot)
+                status, data = request('PUT', '/api/project', snapshot)
                 assert status == 200
+                result = json.loads(data)
+                assert result['preview_file'] == str(preview.resolve())
+                assert result['preview_warning'] is None
                 assert 'Installed app saved this' in project.read_text()
                 assert token not in project.read_text()
+                svg = preview.read_text()
+                assert ET.fromstring(svg).tag == '{http://www.w3.org/2000/svg}svg'
+                assert 'Installed app saved this' in svg
+                assert token not in svg
                 assert list((project.parent / '.research-flow/backups' / project.name).glob('*.yaml'))
                 assert request('PUT', '/api/project', snapshot)[0] == 409
+                assert preview.read_text() == svg, 'A conflict must preserve the saved preview'
                 saved = project.read_bytes()
             finally:
                 proc.terminate()

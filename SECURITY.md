@@ -46,6 +46,14 @@ with backups. A small race remains possible with non-cooperating external writer
 between the final revision check and replacement. Use one process per workflow and
 coordinate external editing; this is not a database lock across all writers.
 
+New SVG previews are published only if their filename is still unused. Existing
+previews are updated through a verified, locked file descriptor, so swapping the
+filename cannot redirect writes to an unrelated file. Symlinks and hard links are
+refused. Existing SVG refreshes happen in place: a concurrent reader may see an
+incomplete image, and recovery after a write failure is best-effort. The lock
+coordinates Research Flow writers; it cannot prevent other programs from editing
+the same file contents directly. Preview failures do not undo a saved YAML file.
+
 ## Reporting
 
 Do not post real project files, private URLs or tokens in public issues. Report a
