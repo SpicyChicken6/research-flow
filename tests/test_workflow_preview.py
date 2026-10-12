@@ -13,6 +13,11 @@ from unittest import mock
 import xml.etree.ElementTree as ET
 from http.server import ThreadingHTTPServer
 
+try:
+    import fcntl
+except ImportError:
+    fcntl = None
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import server
 from server import ConflictError, ProjectStore, ValidationError, make_handler
@@ -142,21 +147,115 @@ class PreviewStoreTests(unittest.TestCase):
         self.assertIsNone(recovered['preview_warning'])
         self.assertPreviewContains('Recovered preview')
 
-    def test_preview_replace_failure_keeps_old_preview_and_cleans_temp_files(self):
+    def test_preview_sync_failure_restores_old_preview_and_cleans_temp_files(self):
         self.save()
         preview = self.preview.read_bytes()
-        replace = os.replace
+        before = self.preview.stat()
+        identity = before.st_dev, before.st_ino
+        fsync = os.fsync
+        failed = False
 
-        def reject_preview(source, destination):
-            if Path(destination) == self.preview:
-                raise PermissionError('Preview is temporarily locked')
-            return replace(source, destination)
+        def reject_preview_once(fd):
+            nonlocal failed
+            opened = os.fstat(fd)
+            if (opened.st_dev, opened.st_ino) == identity and not failed:
+                failed = True
+                raise OSError('Preview synchronization failed')
+            return fsync(fd)
 
-        with mock.patch.object(server.os, 'replace', side_effect=reject_preview):
-            result = self.save('Saved despite locked preview')
-        self.assertSuccessfulWarning(result, 'Saved despite locked preview')
+        with mock.patch.object(server.os, 'fsync', side_effect=reject_preview_once):
+            result = self.save('Saved despite preview synchronization failure')
+        self.assertTrue(failed)
+        self.assertSuccessfulWarning(result, 'Saved despite preview synchronization failure')
         self.assertEqual(self.preview.read_bytes(), preview)
         self.assertEqual(list(self.path.parent.glob('.*.tmp')), [])
+
+    def test_shorter_preview_update_truncates_old_content(self):
+        self.save('A long workflow name ' * 20)
+        original_size = self.preview.stat().st_size
+        result = self.save('Short')
+        self.assertIsNone(result['preview_warning'])
+        self.assertLess(self.preview.stat().st_size, original_size)
+        self.assertPreviewContains('Short')
+
+    def test_partial_preview_write_failure_restores_original_bytes_and_mode(self):
+        self.save()
+        original = self.preview.read_bytes()
+        self.preview.chmod(0o600)
+        refresh = self.store._refresh_open_preview
+        write_attempts = 0
+
+        def interrupted_refresh(source, content, mode):
+            def interrupted_write(data):
+                nonlocal write_attempts
+                write_attempts += 1
+                if write_attempts == 1:
+                    return source.write(data[:17])
+                if write_attempts == 2:
+                    raise OSError('Preview write interrupted')
+                return source.write(data)
+
+            interrupted = mock.Mock(wraps=source)
+            interrupted.write.side_effect = interrupted_write
+            return refresh(interrupted, content, mode)
+
+        with mock.patch.object(self.store, '_refresh_open_preview', side_effect=interrupted_refresh):
+            result = self.save('Saved despite interrupted preview update')
+        self.assertGreaterEqual(write_attempts, 3)
+        self.assertSuccessfulWarning(result, 'Saved despite interrupted preview update')
+        self.assertEqual(self.preview.read_bytes(), original)
+        self.assertEqual(stat.S_IMODE(self.preview.stat().st_mode), 0o600)
+
+    def save_during_preview_replacement(self, replace_preview):
+        refresh = self.store._refresh_open_preview
+
+        def replace_then_refresh(source, content, mode):
+            # The helper is entered after the last ownership/path check. Replacing
+            # the pathname here reproduces the reviewed check-to-write race.
+            replace_preview()
+            return refresh(source, content, mode)
+
+        with mock.patch.object(self.store, '_refresh_open_preview', side_effect=replace_then_refresh) as update:
+            result = self.save('Saved during preview replacement')
+        update.assert_called_once()
+        self.assertSuccessfulWarning(result, 'Saved during preview replacement')
+        self.assertEqual(list(self.path.parent.glob('.*.tmp')), [])
+
+    def test_existing_preview_replaced_with_artwork_before_write_is_preserved(self):
+        self.save()
+        artwork = b'<svg xmlns="http://www.w3.org/2000/svg"><text>Unrelated artwork</text></svg>'
+        replacement = self.path.with_name('replacement.svg')
+        replacement.write_bytes(artwork)
+        replacement.chmod(0o640)
+        self.save_during_preview_replacement(lambda: replacement.replace(self.preview))
+        self.assertEqual(self.preview.read_bytes(), artwork)
+        self.assertEqual(stat.S_IMODE(self.preview.stat().st_mode), 0o640)
+
+    def test_existing_preview_replaced_with_symlink_before_write_is_preserved(self):
+        self.save()
+        target = self.path.with_name('personal.svg')
+        artwork = b'My personal artwork'
+        target.write_bytes(artwork)
+        target.chmod(0o640)
+        replacement = self.path.with_name('replacement.svg')
+        replacement.symlink_to(target)
+        self.save_during_preview_replacement(lambda: replacement.replace(self.preview))
+        self.assertTrue(self.preview.is_symlink())
+        self.assertEqual(self.preview.readlink(), target)
+        self.assertEqual(target.read_bytes(), artwork)
+        self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o640)
+
+    def test_existing_preview_replaced_with_directory_before_write_is_preserved(self):
+        self.save()
+
+        def replace_with_directory():
+            self.preview.unlink()
+            self.preview.mkdir()
+            (self.preview / 'personal.txt').write_text('Personal data')
+
+        self.save_during_preview_replacement(replace_with_directory)
+        self.assertTrue(self.preview.is_dir())
+        self.assertEqual((self.preview / 'personal.txt').read_text(), 'Personal data')
 
     def test_workflow_replace_failure_never_refreshes_preview(self):
         self.save()
@@ -248,6 +347,33 @@ class PreviewStoreTests(unittest.TestCase):
         result = self.save('Saved with directory collision')
         self.assertSuccessfulWarning(result, 'Saved with directory collision')
         self.assertTrue(self.preview.is_dir())
+
+    def test_hardlinked_preview_is_preserved(self):
+        self.save()
+        original = self.preview.read_bytes()
+        alias = self.path.with_name('personal.svg')
+        os.link(self.preview, alias)
+        result = self.save('Saved with hardlinked preview')
+        self.assertSuccessfulWarning(result, 'Saved with hardlinked preview')
+        self.assertEqual(self.preview.read_bytes(), original)
+        self.assertEqual(alias.read_bytes(), original)
+
+    @unittest.skipUnless(hasattr(os, 'mkfifo'), 'Requires named pipes')
+    def test_preview_fifo_is_preserved(self):
+        os.mkfifo(self.preview)
+        result = self.save('Saved with named pipe collision')
+        self.assertSuccessfulWarning(result, 'Saved with named pipe collision')
+        self.assertTrue(stat.S_ISFIFO(self.preview.lstat().st_mode))
+
+    @unittest.skipIf(fcntl is None, 'Requires advisory file locks')
+    def test_locked_preview_is_preserved(self):
+        self.save()
+        original = self.preview.read_bytes()
+        with self.preview.open('r+b') as locked:
+            fcntl.flock(locked.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            result = self.save('Saved with locked preview')
+        self.assertSuccessfulWarning(result, 'Saved with locked preview')
+        self.assertEqual(self.preview.read_bytes(), original)
 
     def test_workflow_named_svg_is_not_replaced_by_its_preview(self):
         self.path = self.path.rename(self.path.with_suffix('.svg'))

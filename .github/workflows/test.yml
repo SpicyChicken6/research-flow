@@ -67,3 +67,4 @@ jobs:
       - run: python tests/browser/stage_checks.py
       - run: python tests/browser/minimap_checks.py
       - run: python tests/browser/linux_browser_checks.py
+      - run: python tests/browser/workflow_preview_checks.py
