@@ -78,6 +78,10 @@ focus and **Arrange** fits the view. Free card positioning is available only in 
 Existing Graph coordinates remain in the file for compatibility and are not rewritten.
 The plus control on an overview card adds an operation in Layers.
 
+Graph connections leave layers, memberships, and parent branches unchanged.
+In Layers or Step list, a new dependency can still assign an ungrouped step to an
+unambiguous parent branch; existing branches are preserved.
+
 ## Free canvas arrangement
 
 The automatic arrangement spreads operation branches above and below their
@@ -92,7 +96,7 @@ a drag. Undo and Redo restore card positions.
 **Arrange** restores the automatic arrangement for the visible cards, and can be
 undone. **Fit** adjusts the camera without changing positions. Saved coordinates
 live in `layout.layer_positions`, independently of Graph's `layout.positions`, and
-survive YAML exports and Save copy. Cards outside the selected overview keep their
+survive YAML saves, automatic HTML snapshots and editable Save copy exports. Cards outside the selected overview keep their
 saved positions when arranging the current view.
 
 ## Ideas and questions to revisit
@@ -111,7 +115,7 @@ link does not change project data or create a dependency. Removing a linked step
 keeps the idea as a project-wide item. Edits and removals support Undo/Redo.
 
 Items are stored in the optional top-level `ideas` list and travel with YAML,
-JSON and editable HTML saves. Older files do not gain this field just by opening
+JSON, read-only HTML snapshots and editable HTML saves. Older files do not gain this field just by opening
 the view. A revisit note is context, not an automatic reminder or scheduled job.
 
 To build the standalone demonstration from a source checkout:
@@ -120,10 +124,18 @@ To build the standalone demonstration from a source checkout:
 python scripts/build_preview.py --project examples/three-layers.yaml --output dist/three-layers.html
 ```
 
-Open the generated file in a browser. **Save copy** downloads an editable HTML
-with the current document, including records. The running app's **Save** persists
-the same fields to YAML. The automatic SVG remains a full dependency-graph
-snapshot; it does not include the detailed record panel.
+Open the generated demonstration in a browser. **Save copy** downloads an editable
+HTML with the current document, including records. This is separate from the
+automatic snapshot produced by the running app: **Save** writes the YAML and
+refreshes a read-only HTML file beside it. That snapshot supports Graph, Layers,
+Step list, method-history browsing and Ideas & questions, with its saved data and
+assets available offline. Navigation never edits the snapshot or the YAML; run
+Research Flow to change positions, plans, records or ideas. Reload an open snapshot
+after saving again to see the newer version.
+
+Use **More → Export SVG** in the running app for a static dependency-graph figure.
+SVG export does not include the detailed method-history panel. Existing SVG files
+are preserved and are no longer updated automatically on Save.
 
 ## Planned methods and recorded work
 

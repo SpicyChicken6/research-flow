@@ -107,8 +107,10 @@ option is needed. Reopen the browser tab after changing these settings.
 Remote browser access is currently a VS Code preview feature. If the settings are
 unavailable, update VS Code or use the [optional SSH setup](linux.md#other-browsers-optional).
 
-Use the running app URL. Opening a portable HTML export provides **Save copy** and
-does not write the server YAML. Older iframe-based previews may be blocked by the
+Use the running app URL to edit. The `workflow.html` generated on Save is an offline,
+read-only snapshot; open it in a browser to explore it without running Research Flow.
+Older editable portable exports provide **Save copy** and do not write the server
+YAML. Older iframe-based previews may be blocked by the
 app's frame protection; use the current integrated browser or a normal browser.
 The terminal directory at launch controls automatic discovery. VS Code's open
 workspace alone does not select the YAML, and changing it does not switch projects.

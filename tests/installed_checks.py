@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import queue
+import re
 import subprocess
 import sys
 import tempfile
@@ -85,12 +86,25 @@ def run(executable):
                 snapshot = json.loads(data)
                 assert Path(snapshot['file']) == project.resolve()
                 assert snapshot['document']['tasks'] == []
-                preview = project.with_suffix('.svg')
+                preview = project.with_suffix('.html')
                 assert not preview.exists(), 'Opening a workflow must not generate a preview'
                 if original is not None:
                     assert project.read_bytes() == original, 'Opening an existing workflow must not rewrite it'
                     assert snapshot['document']['custom'] == 'preserved'
                 snapshot['document']['project']['name'] = 'Installed app saved this'
+                snapshot['document']['project']['presentation'] = 'layers'
+                snapshot['document']['tasks'] = [
+                    {'id': 'overview', 'title': 'Research question'},
+                    {'id': 'operation', 'title': 'Review evidence', 'layer': 'operation', 'overview_id': 'overview'},
+                    {'id': 'processing', 'title': 'Record findings', 'layer': 'processing', 'operation_id': 'operation',
+                     'records': [{'id': 'attempt', 'recorded_at': '2026-10-16T20:15:00Z',
+                                  'status': 'recorded', 'method': 'Document reviewed evidence'}]},
+                ]
+                snapshot['document']['ideas'] = [
+                    {'id': 'question', 'title': 'Revisit this result', 'kind': 'question',
+                     'status': 'open', 'created_at': '2026-10-16T20:15:00Z', 'related_task_id': 'processing'},
+                ]
+                snapshot['document']['layout']['layer_positions'] = {'processing': {'x': -80, 'y': 120}}
                 status, data = request('PUT', '/api/project', snapshot)
                 assert status == 200
                 result = json.loads(data)
@@ -98,14 +112,31 @@ def run(executable):
                 assert result['preview_warning'] is None
                 assert 'Installed app saved this' in project.read_text()
                 assert token not in project.read_text()
-                svg = preview.read_text()
+                html = preview.read_text()
+                assert '<!doctype html>' in html.lower()
+                embedded = re.search(r'<script id="initial-project" type="application/json">(.*?)</script>', html, re.S)
+                assert embedded and json.loads(embedded[1]) == result['document']
+                assert 'window.RESEARCH_FLOW_VIEWER' in html
+                for entry_point in ('computeLayerCanvas', 'renderLayeredView', 'renderMethodDetails',
+                                    'renderIdeasList', 'overviewConnector'):
+                    assert f'function {entry_point}(' in html, entry_point
+                assert not re.search(r'(?m)^(?:import|export)\s', html)
+                assert not re.search(r'<script\b[^>]*\bsrc=', html)
+                assert 'href="styles.css"' not in html
+                assert 'href="assets/' not in html
+                assert token not in html
+                assert not project.with_suffix('.svg').exists(), 'Save must not create an automatic SVG'
+                saved = project.read_bytes()
+                status, data = request('POST', '/api/export/svg',
+                                       {'document': snapshot['document'], 'layout_mode': 'freeform'})
+                assert status == 200
+                svg = json.loads(data)['svg']
                 assert ET.fromstring(svg).tag == '{http://www.w3.org/2000/svg}svg'
-                assert 'Installed app saved this' in svg
-                assert token not in svg
+                assert 'Installed app saved this' in svg and token not in svg
+                assert project.read_bytes() == saved and preview.read_text() == html
                 assert list((project.parent / '.research-flow/backups' / project.name).glob('*.yaml'))
                 assert request('PUT', '/api/project', snapshot)[0] == 409
-                assert preview.read_text() == svg, 'A conflict must preserve the saved preview'
-                saved = project.read_bytes()
+                assert preview.read_text() == html, 'A conflict must preserve the saved preview'
             finally:
                 proc.terminate()
                 try:

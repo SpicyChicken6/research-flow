@@ -26,9 +26,9 @@ done
 
 | Location | Coverage |
 | --- | --- |
-| `tests/test_*.py` | YAML validation, migrations, saves, conflicts, backups, authentication, CLI startup, updates and current-folder discovery |
-| `tests/test_*.mjs` | Graph model, branches, connections, layout and logo animation |
-| `tests/browser/` | Dependency stages/freeform, editing, export/reopen, hierarchy, deletion, minimap, animation, authenticated save/reload and SVG previews |
+| `tests/test_*.py` | YAML validation, layer memberships, work records, ideas, independent canvas positions, saves, conflicts, backups, HTML snapshots, authentication, CLI startup and updates |
+| `tests/test_*.mjs` | Ordered overview Graph, layer geometry, curved connections, model edits, history records, ideas and logo animation |
+| `tests/browser/` | Ordered overview Graph, free Layers positioning, methods and ideas, editing, export/reopen, hierarchy, deletion, minimap, animation, authenticated save/reload, read-only offline HTML previews and SVG export |
 | `tests/installed_checks.py` | Installed command, bundled assets and saving outside the source checkout |
 | `tests/update_install_checks.py` | Real same-version self-updates in disposable pip and pipx installations, suffix/home targeting and workflow preservation |
 
@@ -39,6 +39,18 @@ The direct browser suite uses a real CLI server and a TCP port relay. It tests
 forwarded-port behavior, not SSH authentication or a particular remote server.
 Other browser suites also exercise portable HTML; their server sections use a
 Python HTTP bridge. Safari, Firefox and systemd deployment are not covered.
+
+The layer-specific suites are `layers_checks.py`, `layer_positions_checks.py`,
+`organic_arrangement_checks.py` and `ideas_checks.py`; `overview_graph_checks.py`
+covers the ordered overview-only Graph. Verify both kinds of standalone HTML:
+the editable demonstration built by `scripts/build_preview.py`, and the read-only
+snapshot refreshed beside the YAML by Save. A read-only snapshot must allow
+navigation and history browsing without adding records, editing ideas, moving
+cards, changing selected results, or contacting the server.
+
+These five suites run in CI and replace the retired `stage_checks.py`, whose
+Graph Stages/Freeform switch no longer exists. Dependency-stage model and SVG
+layout checks remain in the unit suites.
 
 ## Build and test an installable package
 
@@ -77,7 +89,8 @@ local wheels with network indexes disabled. It never updates your existing app.
 ## Repository layout
 
 - `server.py`, `updater.py`, `__init__.py`, `__main__.py`: Python server, updater and installed entry points.
-- `workflow_plot.py`: pure, dependency-free SVG workflow renderer used on Save.
+- `workflow_html.py`: standalone HTML builder used for read-only previews on Save.
+- `workflow_plot.py`: pure, dependency-free renderer for optional SVG exports.
 - `web/`: interface, graph model, styles and SVG assets.
 - `scripts/build_preview.py`: build editable standalone HTML without changing source.
 - `examples/`: demonstration workflow used by the preview builder and tests.

@@ -6,20 +6,23 @@ Research Flow is a visual planner for a single research project. Connect steps,
 organize them into branches, and keep your workflow in a readable YAML file on your
 own machine or Linux server.
 
-![Research Flow showing dependency stages, nested research steps, and the Stages / Freeform switch](docs/screenshot.png)
+![Research Flow workflow canvas](docs/screenshot.png)
+
+The screenshot shows an earlier interface. Graph now follows numbered steps;
+free card positioning lives in Layers.
 
 ## Features
 
-- **Three connected layers** — move from overview decisions to research operations to methods and work records. Track literature, downloads, code, analysis and writing with versioned accounts of inputs, parameters, outputs and rationale. See the [three-layer guide](docs/three-layers.md).
+- **Three connected layers** — connect overview decisions, research operations and individual processing steps. Track literature, downloads, code, analysis and writing with records of inputs, parameters, outputs and rationale. See the [three-layer guide](docs/three-layers.md).
 - **Ideas & questions** — capture possibilities and decisions to revisit, optionally link them to a step, and preserve their outcomes when resolved.
 - **Organized overview** — Graph keeps high-level steps in numbered order; use Layers for freely arranged cards and their detailed work.
-- **Canvas editing** — arrange, connect, rename, and delete steps directly on the canvas.
+- **Canvas editing** — connect, rename and delete steps, and freely position cards in Layers.
 - **Nested branches** — organize numbered steps and children, with an indented list view.
 - **Focus and overview** — zoom into a branch or navigate the whole project with the minimap.
 - **Details in one place** — track each step's status, goals, notes, inputs, and outputs.
 - **Undo and redo** — revisit changes as your plan evolves.
 - **Your files, your workflow** — save to YAML with previous-version backups and protection against conflicting edits.
-- **Preview beside your workflow** — each Save refreshes a standalone SVG of the full graph, ready to view without launching the app.
+- **Interactive preview beside your workflow** — each Save refreshes a standalone, read-only HTML viewer, ready to explore without launching the app.
 
 ## Quick start
 
@@ -40,16 +43,24 @@ research-flow
 Open the private URL printed in the terminal. Keep the app running and click
 **Save** to write your changes to the selected YAML file.
 
-Saving `workflow.yaml` also creates or updates `workflow.svg` in the same folder
-on the machine running Research Flow. The image groups the full graph by dependency
-stage and includes all branches, even when focused or collapsed in the editor. Open the SVG directly, or embed it in a Markdown file with
-`![Workflow](workflow.svg)`. Opening a workflow does not create or update a preview.
+Saving `workflow.yaml` also creates or updates `workflow.html` in the same folder
+on the machine running Research Flow. Open that file in a browser to zoom, pan,
+explore Graph, Layers and Step list, and read task details, recorded methods and
+ideas without running the app. Graph stays in numbered overview-step order;
+Layers retains its saved card positions. The viewer embeds its data and assets
+for offline use. It shows the last saved snapshot; reload an open viewer after
+saving again. Opening a workflow does not write a preview.
+
+To edit, run `research-flow` and open its private URL. The saved HTML stays read-only,
+even while the app is running. Use **More → Export SVG** in the running app when you
+need a figure for Markdown, documents, or slides. Existing SVG files are left intact
+and are no longer refreshed automatically.
 
 If the preview cannot be written, your YAML still saves: the app shows
-**Saved · preview unavailable** and lets you retry with **Save**. An existing SVG
+**Saved · preview unavailable** and lets you retry with **Save**. An existing HTML
 that was not generated for this workflow is preserved; move it aside before retrying.
-Portable HTML's **Save copy** continues to download an editable HTML file; the
-automatic SVG is created when saving through the running app.
+Older editable portable exports still support **Save copy**. Automatically saved
+HTML previews are read-only and never write to your YAML.
 
 - **One YAML/YML file in the folder:** opens it.
 - **No YAML files:** asks before creating `workflow.yaml` (default: Yes).

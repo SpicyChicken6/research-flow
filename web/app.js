@@ -118,7 +118,9 @@ const esc = (value = '') => String(value).replace(/[&<>"']/g, c => ({'&':'&amp;'
 const icon = name => `<svg class="icon" viewBox="0 0 24 24" aria-hidden="true">${paths[name] || paths.graph}</svg>`;
 const statusOptions = status => Object.entries(STATUS).map(([key, value]) => `<option value="${key}" ${key === status ? 'selected' : ''}>${value.label}</option>`).join('');
 // Keep a pristine copy, not a serialization of the currently rendered controls.
-const portable = location.protocol === 'file:' || window.RESEARCH_FLOW_PREVIEW;
+const viewer = window.RESEARCH_FLOW_VIEWER;
+const readOnly = !!viewer;
+const portable = readOnly || location.protocol === 'file:' || window.RESEARCH_FLOW_PREVIEW;
 const portableTemplate = portable ? '<!doctype html>\n' + document.documentElement.outerHTML : null;
 let project = ensurePositions(validateProject(JSON.parse($('#initial-project').textContent)));
 let baseline = JSON.stringify(project), revision = null, mode = 'loading', filePath = 'project.yaml';
@@ -181,6 +183,7 @@ function toast(message, error = false) {
   $('#toasts').append(el); setTimeout(() => el.remove(), error ? 6500 : 3200);
 }
 function remember(before, group = '') {
+  if(readOnly)return;
   if (!group || group !== lastGroup || Date.now() - groupTime > 900) {
     history.push({document:before});
     if (history.length > 70) history.shift();
@@ -188,6 +191,7 @@ function remember(before, group = '') {
   lastGroup = group; groupTime = Date.now(); future = [];
 }
 function change(fn, {group='', inspector=true, validate=false, graph=true} = {}) {
+  if(readOnly)return false;
   const before = clone(project), next = clone(project);
   try {
     const result = fn(next) || next;
@@ -197,6 +201,7 @@ function change(fn, {group='', inspector=true, validate=false, graph=true} = {})
   } catch(error) { toast(error.message, true); return false; }
 }
 function restoreHistory(from,to) {
+  if (readOnly) return;
   if(!from.length)return;
   const entry=from.pop();
   to.push({document:clone(project)});
@@ -243,6 +248,7 @@ function toggleBranch(id) {
   refresh();
 }
 function reparent(id,parent) {
+  if (readOnly) return;
   try {
     const source=clone(project);
     if(view==='graph')source.tasks.find(t=>t.id===id).layer='overview';
@@ -288,13 +294,16 @@ function renderHeader() {
   if (document.activeElement !== $('#project-title')) $('#project-title').value=project.project.name || '';
   document.title = `${project.project.name || 'Untitled project'} · Research Flow`;
   const label = busy ? 'Saving…' : mode === 'loading' ? 'Connecting…' : mode === 'error' ? 'File unavailable' : conflict ? 'File changed' : dirty() ? 'Unsaved changes' : mode === 'server' ? (previewWarning ? 'Saved · preview unavailable' : 'Saved') : copyDownloaded ? 'Copy downloaded' : 'In this tab';
-  $('#save-state').innerHTML = `${dirty() ? '<span class="save-dot dirty"></span>' : ''}${label}`;
-  $('#save-state').title = mode === 'server' ? (previewWarning || filePath) : 'Preview changes live in this tab. Save copy downloads a reopenable HTML with your edits.';
+  const savedAt = readOnly && viewer.saved_at ? new Date(viewer.saved_at) : null;
+  const savedLabel = savedAt && !Number.isNaN(savedAt.getTime()) ? savedAt.toLocaleString(undefined, {dateStyle:'medium',timeStyle:'short'}) : 'time unavailable';
+  $('#save-state').innerHTML = readOnly ? `<span class="viewer-label">Read-only</span><span class="viewer-saved">Last saved <time datetime="${esc(viewer.saved_at || '')}">${esc(savedLabel)}</time></span>` : `${dirty() ? '<span class="save-dot dirty"></span>' : ''}${label}`;
+  $('#save-state').title = readOnly ? 'Saved snapshot. Run Research Flow to edit the workflow. Refresh this page after saving a newer snapshot.' : mode === 'server' ? (previewWarning || filePath) : 'Preview changes live in this tab. Save copy downloads a reopenable HTML with your edits.';
   $('#save-button').textContent = busy ? 'Saving…' : mode === 'server' ? 'Save' : 'Save copy';
-  $('#save-button').title = mode === 'server' ? (previewWarning ? 'Retry saving the SVG preview · ⌘/Ctrl S' : 'Save workflow and SVG preview · ⌘/Ctrl S') : 'Download an editable HTML copy of this project · ⌘/Ctrl S';
-  $('#save-button').disabled = busy || ['loading','error'].includes(mode) || (mode === 'server' && (conflict || (!dirty() && !previewWarning)));
-  $('#add-button').disabled = ['loading','error'].includes(mode) || project.tasks.length>=500;
-  $('#undo-button').disabled = !history.length; $('#redo-button').disabled = !future.length;
+  $('#save-button').title = mode === 'server' ? (previewWarning ? 'Retry saving the HTML preview · ⌘/Ctrl S' : 'Save workflow and interactive HTML preview · ⌘/Ctrl S') : 'Download an editable HTML copy of this project · ⌘/Ctrl S';
+  $('#save-button').disabled = readOnly || busy || ['loading','error'].includes(mode) || (mode === 'server' && (conflict || (!dirty() && !previewWarning)));
+  $('#add-button').disabled = readOnly || ['loading','error'].includes(mode) || project.tasks.length>=500;
+  $('#undo-button').disabled = readOnly || !history.length; $('#redo-button').disabled = readOnly || !future.length;
+  $('#export-svg-option').hidden = readOnly || mode !== 'server';
   $('#focus-button').hidden = !currentTask() || view !== 'graph';
   $('#focus-button').classList.toggle('focus-active', focusMode);
   $('#focus-button').setAttribute('aria-pressed', String(focusMode));
@@ -385,13 +394,13 @@ function renderGraph() {
     const p=positionOf(t.id),size=taskSize(t),active=selected===t.id&&!selectedEdge,children=childrenOf(graphDocument(),t.id),collapsed=collapsedBranches.has(t.id)||children.some(c=>!shown.has(c.id));
     const childLabel=children.length===1?'1 child':`${children.length} children`;
     return `<article class="task-node ${t.parent_id?'child-node':''} ${active?'selected':related.has(t.id)?'related':''}" ${shown.has(t.id)?'':'hidden'} data-id="${esc(t.id)}" data-status="${esc(t.status)}" style="left:${p.x}px;top:${p.y}px;width:${size.width}px;height:${size.height}px" tabindex="0" aria-label="${esc(t.title)}, ${STATUS[t.status].label}${t.parent_id?', child step':''}" aria-roledescription="workflow step">
-    <button class="port in" data-port="in" data-id="${esc(t.id)}" aria-label="Input for ${esc(t.title)}" title="Add an incoming dependency"></button>
+    ${readOnly?'':`<button class="port in" data-port="in" data-id="${esc(t.id)}" aria-label="Input for ${esc(t.title)}" title="Add an incoming dependency"></button>`}
     <div class="task-node-header"><span class="status-pill"><span class="status-dot ${esc(t.status)}"></span>${STATUS[t.status].label}</span></div>
-    <h3 title="Double-click to rename" class="${t.title==='Untitled step'?'untitled':''}">${esc(t.title||'Untitled step')}</h3>
-    <div class="node-meta"><p class="node-goal ${!t.goal?'placeholder':''}">${esc(t.goal || (t.title==='Untitled step'?'Click to name this step':''))}</p></div>
+    <h3 title="${readOnly?'Click to view details':'Double-click to rename'}" class="${t.title==='Untitled step'?'untitled':''}">${esc(t.title||'Untitled step')}</h3>
+    <div class="node-meta"><p class="node-goal ${!t.goal?'placeholder':''}">${esc(t.goal || (!readOnly&&t.title==='Untitled step'?'Click to name this step':''))}</p></div>
     ${t.outputs.length?`<div class="node-output" title="${esc(`Outputs: ${t.outputs.join(', ')}`)}">${icon('file')}<span>${esc(t.outputs[0])}</span>${t.outputs.length>1?`<span class="output-more">+${t.outputs.length-1}</span>`:''}</div>`:''}
-    <div class="node-hierarchy-controls">${children.length?`<button class="children-toggle ${collapsed?'is-collapsed':''}" data-node-action data-action="toggle-children" data-id="${esc(t.id)}" aria-expanded="${!collapsed}" aria-label="${collapsed?'Show':'Hide'} children of ${esc(t.title)}" title="${collapsed?'Show':'Hide'} ${descendantIds(graphDocument(),t.id).size} descendant steps">${icon('chevron')}<span>${childLabel}</span></button>`:''}<button class="node-delete" data-node-action data-action="delete-card" data-id="${esc(t.id)}" aria-label="Delete step ${esc(t.title)}" title="Delete step">${icon('trash')}</button><button class="node-add-child" data-node-action data-action="add-child" data-id="${esc(t.id)}" aria-label="Add operation to ${esc(t.title)}" title="Add operation in Layers">${icon('plus')}</button></div>
-    <button class="port out" data-port="out" data-id="${esc(t.id)}" aria-label="Output for ${esc(t.title)}" title="Drag to connect overview steps."></button></article>`;
+    <div class="node-hierarchy-controls">${children.length?`<button class="children-toggle ${collapsed?'is-collapsed':''}" data-node-action data-action="toggle-children" data-id="${esc(t.id)}" aria-expanded="${!collapsed}" aria-label="${collapsed?'Show':'Hide'} children of ${esc(t.title)}" title="${collapsed?'Show':'Hide'} ${descendantIds(graphDocument(),t.id).size} descendant steps">${icon('chevron')}<span>${childLabel}</span></button>`:''}${readOnly?'':`<button class="node-delete" data-node-action data-action="delete-card" data-id="${esc(t.id)}" aria-label="Delete step ${esc(t.title)}" title="Delete step">${icon('trash')}</button><button class="node-add-child" data-node-action data-action="add-child" data-id="${esc(t.id)}" aria-label="Add operation to ${esc(t.title)}" title="Add operation in Layers">${icon('plus')}</button>`}</div>
+    ${readOnly?'':`<button class="port out" data-port="out" data-id="${esc(t.id)}" aria-label="Output for ${esc(t.title)}" title="Drag to connect overview steps."></button>`}</article>`;
   }).join('');
   renderEdges();applyTransform();updateConnectPrompt();$('#empty-state').hidden=graphDocument().tasks.length>0;
 }
@@ -509,21 +518,27 @@ function zoom(factor, x=$('#canvas').clientWidth/2, y=$('#canvas').clientHeight/
 }
 function pointInWorld(x,y) { const r=$('#canvas').getBoundingClientRect(); return {x:(x-r.left-transform.x)/transform.zoom,y:(y-r.top-transform.y)/transform.zoom}; }
 function dependencyRow(t, source, target) {
-  return `<div class="dependency-row"><span class="status-dot ${t.status}"></span><button class="dependency-name" data-action="select" data-id="${esc(t.id)}" title="Edit ${esc(t.title)}">${esc(t.title)}</button><button class="icon-button" data-action="remove-dependency" data-source="${esc(source)}" data-target="${esc(target)}" title="Remove connection" aria-label="Remove connection ${esc(source)} to ${esc(target)}">${icon('close')}</button></div>`;
+  return `<div class="dependency-row"><span class="status-dot ${t.status}"></span><button class="dependency-name" data-action="select" data-id="${esc(t.id)}" title="${readOnly?'View':'Edit'} ${esc(t.title)}">${esc(t.title)}</button>${readOnly?'':`<button class="icon-button" data-action="remove-dependency" data-source="${esc(source)}" data-target="${esc(target)}" title="Remove connection" aria-label="Remove connection ${esc(source)} to ${esc(target)}">${icon('close')}</button>`}</div>`;
 }
 function renderFamily(task) {
   const descendants=descendantIds(project,task.id),kids=childrenOf(project,task.id);
   const graphKids=childrenOf(graphDocument(),task.id);
   const choices=project.tasks.filter(t=>t.id!==task.id&&!descendants.has(t.id));
   const parent=project.tasks.find(t=>t.id===task.parent_id);
-  return `<section class="inspector-section family-section"><div class="family-heading"><h3>Hierarchy</h3><button class="text-button" data-action="add-child" data-id="${esc(task.id)}">${icon('plus')} ${taskLayer(task)==='overview'?'Add operation':'Add child'}</button></div>
-  ${!parent?`<label class="field-label">Step number<input id="step-number" type="number" min="1" step="1" value="${stepOutline(project).find(row=>row.task.id===task.id).number}"></label><p class="field-help">Children inherit this number. An existing main-step number swaps with this one.</p>`:''}
-  <label class="field-label">Part of<select id="parent-step" aria-label="Parent step"><option value="">No parent · main step</option>${choices.map(t=>`<option value="${esc(t.id)}" ${t.id===task.parent_id?'selected':''}>${esc(t.title)}</option>`).join('')}</select></label>
+  return `<section class="inspector-section family-section"><div class="family-heading"><h3>Hierarchy</h3>${readOnly?'':`<button class="text-button" data-action="add-child" data-id="${esc(task.id)}">${icon('plus')} ${taskLayer(task)==='overview'?'Add operation':'Add child'}</button>`}</div>
+  ${readOnly?viewerField('Step number',stepOutline(project).find(row=>row.task.id===task.id).number,'number'):!parent?`<label class="field-label">Step number<input id="step-number" type="number" min="1" step="1" value="${stepOutline(project).find(row=>row.task.id===task.id).number}"></label><p class="field-help">Children inherit this number. An existing main-step number swaps with this one.</p>`:''}
+  ${readOnly?viewerField('Part of',parent?.title || 'No parent · main step','parent_id'):`<label class="field-label">Part of<select id="parent-step" aria-label="Parent step"><option value="">No parent · main step</option>${choices.map(t=>`<option value="${esc(t.id)}" ${t.id===task.parent_id?'selected':''}>${esc(t.title)}</option>`).join('')}</select></label>`}
   ${parent?`<button class="family-parent" data-action="select" data-id="${esc(parent.id)}">${icon('up')} Open ${esc(parent.title)}</button>`:''}
   ${kids.length?`<div class="family-heading"><span class="connection-group-label">Children</span>${view==='graph'&&graphKids.length?`<button class="text-button" data-action="toggle-children" data-id="${esc(task.id)}">${collapsedBranches.has(task.id)?'Show on canvas':'Collapse branch'}</button>`:''}</div>${kids.map(t=>`<div class="dependency-row"><span class="status-dot ${esc(t.status)}"></span><button class="dependency-name" data-action="select" data-id="${esc(t.id)}">${esc(t.title)}</button><button class="icon-button" data-action="select" data-id="${esc(t.id)}" aria-label="Open child ${esc(t.title)}">${icon('next')}</button></div>`).join('')}`:''}
   </section>`;
 }
 
+function viewerField(label, value, field) {
+  return `<div class="field-label">${esc(label)}<div class="viewer-value" data-view-field="${esc(field)}">${esc(value) || '<span class="viewer-empty">None recorded</span>'}</div></div>`;
+}
+function inspectorTabs(hasMethods=false) {
+  return `<div class="inspector-tabs" role="tablist" aria-label="Step information"><button role="tab" id="plan-tab" data-action="inspector-tab" data-tab="plan" aria-selected="${inspectorTab==='plan'}" aria-controls="plan-panel" tabindex="${inspectorTab==='plan'?0:-1}" class="${inspectorTab==='plan'?'active':''}">Plan</button><button role="tab" id="resources-tab" data-action="inspector-tab" data-tab="resources" aria-selected="${inspectorTab==='resources'}" aria-controls="resources-panel" tabindex="${inspectorTab==='resources'?0:-1}" class="${inspectorTab==='resources'?'active':''}">Notes & files</button>${hasMethods?`<button role="tab" id="methods-tab" data-action="inspector-tab" data-tab="methods" aria-selected="${inspectorTab==='methods'}" aria-controls="methods-panel" tabindex="${inspectorTab==='methods'?0:-1}" class="${inspectorTab==='methods'?'active':''}">Methods</button>`:''}</div>`;
+}
 function renderInspector() {
   const task=currentTask(), container=$('#inspector'), key=selectedEdge || selected;
   const scroll=inspectorSelection===key ? $('#inspector .inspector-content')?.scrollTop || 0 : 0;
@@ -531,6 +546,10 @@ function renderInspector() {
   const heading=label=>`<div class="inspector-heading"><span class="inspector-heading-label">${label}</span><button class="icon-button" data-action="close-inspector" aria-label="Close details" title="Close details">${icon('close')}</button></div>`;
   if (selectedEdge) {
     const [source,target]=selectedEdge.split('|');
+    if (readOnly) {
+      container.innerHTML=`${heading('Connection')}<div class="inspector-content"><div class="connection-direction">${icon('link')} Dependency</div><p class="connection-summary">The step under <strong>To</strong> depends on the step under <strong>From</strong>.</p><div class="connection-group-label">From</div>${dependencyRow(project.tasks.find(t=>t.id===source),source,target)}<div class="connection-group-label">To</div>${dependencyRow(project.tasks.find(t=>t.id===target),source,target)}</div>`;
+      return;
+    }
     const choices=id=>(view==='graph'?graphDocument().tasks:project.tasks).map(t=>`<option value="${esc(t.id)}" ${t.id===id ? 'selected' : ''}>${esc(t.title)}</option>`).join('');
     container.innerHTML=`${heading('Connection')}<div class="inspector-content"><div class="connection-direction">${icon('link')} Dependency</div><p class="connection-summary">The step under <strong>To</strong> depends on the step under <strong>From</strong>.</p><form id="connection-form"><label class="field-label">From<select id="connection-source">${choices(source)}</select></label><label class="field-label">To<select id="connection-target">${choices(target)}</select></label><p id="connection-error" class="inline-error" role="alert"></p><div class="connection-actions"><button class="button primary" type="submit">Update connection</button><button class="button" data-action="reverse-edge" type="button">Reverse</button></div></form></div><div class="inspector-footer"><button class="delete-task" data-action="delete-edge">${icon('trash')} Remove connection</button></div>`;
     return;
@@ -540,6 +559,14 @@ function renderInspector() {
   if(inspectorTab==='methods'&&!hasMethods)inspectorTab='plan';
   const candidates=(view==='graph'?graphDocument().tasks:project.tasks).filter(t=>t.id!==task.id && !task.depends_on.includes(t.id)).filter(t=>{ try{addDependency(project,t.id,task.id);return true;}catch{return false;} });
   const downstream=project.tasks.filter(t=>t.depends_on.includes(task.id));
+  if (readOnly) {
+    container.innerHTML=`${heading('Step details')}<div class="inspector-content"><div class="id-line">${view==='layers'?({'overview':'OVERVIEW','operation':'OPERATION','processing':'PROCESSING STEP'}[taskLayer(task)]):task.parent_id?'CHILD STEP':'MAIN STEP'}</div><h2 class="viewer-title" tabindex="-1" data-view-field="title">${esc(task.title)}</h2>${inspectorTabs(hasMethods)}
+    <div id="plan-panel" role="tabpanel" aria-labelledby="plan-tab" ${inspectorTab!=='plan'?'hidden':''}>${viewerField('Status',STATUS[task.status].label,'status')}${viewerField('Goal',task.goal,'goal')}${layerMetadataFields(task)}${renderFamily(task)}
+    <section class="inspector-section"><h3>Dependencies</h3><div class="connection-group-label">Depends on</div>${task.depends_on.map(id=>dependencyRow(project.tasks.find(t=>t.id===id),id,task.id)).join('') || '<p class="no-connections">No incoming connections</p>'}${downstream.length?`<div class="connection-group-label">Required by</div>${downstream.map(t=>dependencyRow(t,task.id,t.id)).join('')}`:''}</section></div>
+    <div id="resources-panel" role="tabpanel" aria-labelledby="resources-tab" ${inspectorTab!=='resources'?'hidden':''}>${viewerField('Notes',task.notes,'notes')}${viewerField('Inputs',task.inputs.join('\n'),'inputs')}${viewerField('Outputs',task.outputs.join('\n'),'outputs')}${task.agent_instructions?`<details><summary>Existing handoff notes</summary>${viewerField('Agent instructions',task.agent_instructions,'agent_instructions')}</details>`:''}</div>${hasMethods?`<div id="methods-panel" role="tabpanel" aria-labelledby="methods-tab" ${inspectorTab!=='methods'?'hidden':''}>${renderMethodDetails(task,layerSelection.recordId,true)}</div>`:''}</div>`;
+    $('#inspector .inspector-content').scrollTop=scroll;
+    return;
+  }
   container.innerHTML=`${heading('Step details')}<div class="inspector-content"><div class="id-line">${view==='layers'?({'overview':'OVERVIEW','operation':'OPERATION','processing':'PROCESSING STEP'}[taskLayer(task)]):task.parent_id?'CHILD STEP':'MAIN STEP'}</div><textarea class="title-input" rows="2" data-field="title" aria-label="Step title" placeholder="Name this step…" maxlength="200">${task.title==='Untitled step'?'':esc(task.title)}</textarea>
     <div class="inspector-tabs" role="tablist" aria-label="Step information"><button role="tab" id="plan-tab" data-action="inspector-tab" data-tab="plan" aria-selected="${inspectorTab==='plan'}" aria-controls="plan-panel" tabindex="${inspectorTab==='plan'?0:-1}" class="${inspectorTab==='plan'?'active':''}">Plan</button><button role="tab" id="resources-tab" data-action="inspector-tab" data-tab="resources" aria-selected="${inspectorTab==='resources'}" aria-controls="resources-panel" tabindex="${inspectorTab==='resources'?0:-1}" class="${inspectorTab==='resources'?'active':''}">Notes & files</button>${hasMethods?`<button role="tab" id="methods-tab" data-action="inspector-tab" data-tab="methods" aria-selected="${inspectorTab==='methods'}" aria-controls="methods-panel" tabindex="${inspectorTab==='methods'?0:-1}" class="${inspectorTab==='methods'?'active':''}">Methods</button>`:''}</div>
     <div id="plan-panel" role="tabpanel" aria-labelledby="plan-tab" ${inspectorTab!=='plan'?'hidden':''}><label class="field-label">Status<select data-field="status">${statusOptions(task.status)}</select></label><label class="field-label">Goal<textarea rows="3" data-field="goal" placeholder="What should this step achieve?">${esc(task.goal)}</textarea></label>
@@ -556,9 +583,10 @@ function renderInspector() {
 function resizeTitle() { const el=$('#inspector .title-input'); if(el){el.style.height='0px';el.style.height=`${Math.max(32,Math.min(180,el.scrollHeight+2))}px`;} }
 function renderList() {
   const rows=stepOutline(project);
-  $('#list-view').innerHTML=rows.length ? `<table><thead><tr><th>Step</th><th>Status</th><th class="table-deps">Depends on</th></tr></thead><tbody>${rows.map(({task:t,depth,number})=>`<tr data-depth="${depth}" class="${selected===t.id?'is-selected':''}"><td><div class="table-step" style="padding-inline-start:${depth*22}px"><span class="table-number">${number}</span><button class="table-task" data-action="select" data-id="${esc(t.id)}" ${depth?`aria-label="${esc(t.title)}, child of ${esc(project.tasks.find(p=>p.id===t.parent_id)?.title)}"`:''}>${esc(t.title)}</button></div></td><td><select data-table-status="${esc(t.id)}" aria-label="Status of ${esc(t.title)}">${statusOptions(t.status)}</select></td><td class="table-deps">${t.depends_on.map(id=>esc(project.tasks.find(d=>d.id===id)?.title || id)).join('<br>') || '—'}</td></tr>`).join('')}</tbody></table>` : '<div class="list-empty">No steps yet.</div>';
+  $('#list-view').innerHTML=rows.length ? `<table><thead><tr><th>Step</th><th>Status</th><th class="table-deps">Depends on</th></tr></thead><tbody>${rows.map(({task:t,depth,number})=>`<tr data-depth="${depth}" class="${selected===t.id?'is-selected':''}"><td><div class="table-step" style="padding-inline-start:${depth*22}px"><span class="table-number">${number}</span><button class="table-task" data-action="select" data-id="${esc(t.id)}" ${depth?`aria-label="${esc(t.title)}, child of ${esc(project.tasks.find(p=>p.id===t.parent_id)?.title)}"`:''}>${esc(t.title)}</button></div></td><td>${readOnly?`<span class="status-pill"><span class="status-dot ${esc(t.status)}"></span>${STATUS[t.status].label}</span>`:`<select data-table-status="${esc(t.id)}" aria-label="Status of ${esc(t.title)}">${statusOptions(t.status)}</select>`}</td><td class="table-deps">${t.depends_on.map(id=>esc(project.tasks.find(d=>d.id===id)?.title || id)).join('<br>') || '—'}</td></tr>`).join('')}</tbody></table>` : '<div class="list-empty">No steps yet.</div>';
 }
 function renameStep(id) {
+  if (readOnly) return;
   navigateTo(id);
   const node=$$('.task-node').find(el=>el.dataset.id===id),task=currentTask();
   if(!node || !task)return;
@@ -608,7 +636,7 @@ function renderLayers() {
   const focused = $('#layers-view').contains(document.activeElement) ? document.activeElement.closest('[data-action]') : null;
   const focusKey = focused ? {action:focused.dataset.action, id:focused.dataset.id, source:focused.dataset.source, target:focused.dataset.target} : null;
   const focusId = $('#layers-view').contains(document.activeElement) ? document.activeElement.id : null;
-  $('#layers-view').innerHTML = renderLayeredView(layerPointer?.draft || project, layerSelection, !!history.length, !!future.length);
+  $('#layers-view').innerHTML = renderLayeredView(layerPointer?.draft || project, layerSelection, !!history.length, !!future.length,readOnly);
   if(layerCamera.autoFit)fitLayerCanvas();else applyLayerCamera();
   if(layerPointer?.type==='node'&&layerPointer.moved)$('#layer-world .flow-node[data-id="'+layerPointer.taskId+'"]')?.classList.add('is-dragging');
   if(focusKey)[...$('#layers-view').querySelectorAll('[data-action]')].find(el => el.dataset.action === focusKey.action && el.dataset.id === focusKey.id && el.dataset.source === focusKey.source && el.dataset.target === focusKey.target)?.focus({preventScroll:true});
@@ -654,12 +682,14 @@ function layerPositionDraft(base, positions, id, x, y) {
   return doc;
 }
 function moveLayerNode(id,x,y,group='') {
+  if(readOnly)return;
   if(!Number.isFinite(x)||!Number.isFinite(y))return;
   const positions=layerPositionsSnapshot();if(!positions[id])return;
   layerCamera.autoFit=false;
   change(()=>layerPositionDraft(project,positions,id,x,y),{validate:true,group});
 }
 function arrangeLayerCanvas() {
+  if(readOnly)return;
   const ids=Object.keys(layerPositionsSnapshot());
   change(doc=>{for(const id of ids)if(doc.layout.layer_positions)delete doc.layout.layer_positions[id];
     if(doc.layout.layer_positions&&!Object.keys(doc.layout.layer_positions).length)delete doc.layout.layer_positions;
@@ -676,7 +706,7 @@ function renderIdeas() {
   const body=$('#ideas-body'),focused=body.contains(document.activeElement)?document.activeElement:null;
   const key=focused?{id:focused.id,action:focused.dataset.action,item:focused.dataset.id}:null;
   const scroll=$('#ideas-content')?.scrollTop || 0;
-  body.innerHTML=renderIdeasList(project,ideasFilter,expandedIdeaId);
+  body.innerHTML=renderIdeasList(project,ideasFilter,expandedIdeaId,readOnly);
   $('#ideas-content').scrollTop=scroll;
   const target=key?.id?document.getElementById(key.id):key?.action?[...body.querySelectorAll('[data-action]')].find(el=>el.dataset.action===key.action&&el.dataset.id===key.item):null;
   if(key)(target||body.querySelector('[data-action="idea-add"]'))?.focus({preventScroll:true});
@@ -693,6 +723,7 @@ function closeIdeas(restoreFocus=true) {
 }
 
 function openIdeaDialog(id = null) {
+  if(readOnly)return;
   const item=(project.ideas||[]).find(idea=>idea.id===id);
   if(id&&!item)return;
   editingIdeaId=id;
@@ -705,6 +736,7 @@ function openIdeaDialog(id = null) {
   form.elements.title.focus();
 }
 function submitIdea(event) {
+  if(readOnly){event.preventDefault();return;}
   event.preventDefault();const form=event.target;if(!form.reportValidity())return;
   const fields=new FormData(form), item={};
   for(const key of ['title','kind','status','notes','revisit_when','resolution'])item[key]=String(fields.get(key)||'').trim();
@@ -736,6 +768,7 @@ function submitIdea(event) {
   }catch(error){$('#idea-error').textContent=error.message;}
 }
 function confirmIdeaRemoval(id) {
+  if(readOnly)return;
   const item=(project.ideas||[]).find(idea=>idea.id===id);if(!item)return;
   deletingIdeaId=id;$('#delete-idea-title').textContent=item.title;$('#delete-idea-dialog').showModal();
 }
@@ -743,7 +776,7 @@ function openIdeaLink(id) {
   const item=(project.ideas||[]).find(idea=>idea.id===id);
   if(!item?.related_task_id)return;
   closeIdeas(false);navigateTo(item.related_task_id);
-  $('#inspector .title-input')?.focus({preventScroll:true});
+  $('#inspector .title-input, #inspector .viewer-title')?.focus({preventScroll:true});
 }
 function layerTaskContext(task) {
   const kind=taskLayer(task);
@@ -772,6 +805,7 @@ function layerEdit(id) {
   selected=id;selectedEdge=null;inspectorTab='plan';showInspector();refresh();
 }
 function addLayerStep(layer, dependency = null) {
+  if(readOnly){return;}
   let newId;
   const ok=change(doc=>{
     const result=insertBlankStep(doc,{x:0,y:0},dependency); newId=result.id;
@@ -787,12 +821,18 @@ function addLayerStep(layer, dependency = null) {
 function layerMetadataFields(task) {
   const kind=taskLayer(task), stages=overviewSteps(project).filter(t=>t.id!==task.id);
   const operations=project.tasks.filter(t=>taskLayer(t)==='operation'&&t.id!==task.id);
+  if(readOnly){
+    const context=layerTaskContext(task), title=id=>project.tasks.find(t=>t.id===id)?.title||'Unassigned';
+    const membership=kind==='operation'?viewerField('Overview step',title(context.overviewId),'overview_id'):kind==='processing'?viewerField('Operation',title(context.operationId),'operation_id'):'';
+    return `<section class="inspector-section layer-fields"><h3>Workflow layer</h3>${viewerField('Layer',{overview:'1 · Overview',operation:'2 · Operation',processing:'3 · Processing'}[kind],'layer')}${membership}${kind!=='overview'?viewerField('Operation type',task.operation_type||'','operation_type')+viewerField('Planned method',task.method||'','method')+viewerField('Parameters / criteria',task.parameters||'','parameters')+viewerField('Rationale',task.rationale||'','rationale'):''}</section>`;
+  }
   const membership=kind==='operation'?`<label class="field-label">Overview step<select data-layer-field="overview_id"><option value="">Use hierarchy / unassigned</option>${stages.map(t=>`<option value="${esc(t.id)}" ${task.overview_id===t.id?'selected':''}>${esc(t.title)}</option>`).join('')}</select></label>`:kind==='processing'?`<label class="field-label">Operation<select data-layer-field="operation_id"><option value="">Use hierarchy / unassigned</option>${operations.map(t=>`<option value="${esc(t.id)}" ${task.operation_id===t.id?'selected':''}>${esc(t.title)}</option>`).join('')}</select></label>`:'';
   return `<section class="inspector-section layer-fields"><h3>Workflow layer</h3><label class="field-label">Layer<select data-layer-field="layer">${[['overview','1 · Overview'],['operation','2 · Operation'],['processing','3 · Processing']].map(([value,label])=>`<option value="${value}" ${kind===value?'selected':''}>${label}</option>`).join('')}</select></label>${membership}${kind!=='overview'?`<label class="field-label">Operation type<input data-field="operation_type" list="operation-types" value="${esc(task.operation_type||'')}" placeholder="Analysis, literature, download…"></label><label class="field-label">Planned method<textarea rows="3" data-field="method" placeholder="How will this step be performed?">${esc(task.method||'')}</textarea></label><label class="field-label">Parameters / criteria<textarea rows="3" data-field="parameters" placeholder="Settings, search query, inclusion rules…">${esc(task.parameters||'')}</textarea></label><label class="field-label">Rationale<textarea rows="3" data-field="rationale" placeholder="Why this approach?">${esc(task.rationale||'')}</textarea></label><button class="text-button" data-action="layer-show-methods" data-id="${esc(task.id)}">View methods & records →</button>`:''}</section>`;
 }
 function methodTask() {return currentTask()&&taskLayer(currentTask())!=='overview'?currentTask():project.tasks.find(t=>t.id===(layerSelection.processingId||layerSelection.operationId));}
 
 function openRecordDialog() {
+  if(readOnly){return;}
   const task=methodTask();if(!task)return;
   recordingTaskId=task.id;
   const form=$('#record-work-form');form.reset();
@@ -801,6 +841,7 @@ function openRecordDialog() {
   $('#record-error').textContent='';$('#record-work-dialog').showModal();
 }
 function submitWorkRecord(event) {
+  if(readOnly){event.preventDefault();return;}
   event.preventDefault();const form=event.target;
   if(!form.reportValidity())return;
   const fields=new FormData(form), record={id:`record_${crypto.randomUUID().replaceAll('-','')}`,recorded_at:new Date().toISOString()};
@@ -813,10 +854,12 @@ function submitWorkRecord(event) {
   } catch(error) {$('#record-error').textContent=error.message;}
 }
 function removeEdge(source,target) {
+  if (readOnly) return;
   selectedEdge=null;
   change(doc=>{const t=doc.tasks.find(t=>t.id===target); if(t)t.depends_on=t.depends_on.filter(d=>d!==source);});
 }
 function editEdge(source,target) {
+  if (readOnly) return;
   if(!selectedEdge)return;
   const before=selectedEdge, [oldSource,oldTarget]=before.split('|'), next=clone(project);
   try {
@@ -841,6 +884,7 @@ function announceParentChanges(before,after) {
   }
 }
 function connect(source,target) {
+  if (readOnly) return;
   try {
     const before=project, next=(view==='graph'?addDependency:addBranchDependency)(project,source,target);connectFrom=null;
     if(change(()=>next,{validate:true}))announceParentChanges(before,next);
@@ -854,7 +898,7 @@ function updateConnectPrompt() {
 }
 function selectEdge(key) { if(!edgeExists(key))return;key.split('|').forEach(revealPath);selectedEdge=key;connectFrom=null;showInspector();refresh(); }
 function addBlankStep(dependency=null,parent=null) {
-  if(['loading','error'].includes(mode))return;
+  if(readOnly||['loading','error'].includes(mode))return;
   try {
     if(project.tasks.length>=500)throw Error('A workflow can contain at most 500 steps.');
     if(dependency&&!project.tasks.some(t=>t.id===dependency))throw Error('Dependency not found.');
@@ -876,6 +920,7 @@ function addBlankStep(dependency=null,parent=null) {
 
 /** An in-page confirmation works even where native confirm() is suppressed. */
 function requestDeleteStep(id=selected) {
+  if (readOnly) return;
   const task=project.tasks.find(t=>t.id===id),dialog=$('#delete-step-dialog');
   if(!task||dialog.open)return;
   pendingDeletion=id;
@@ -886,6 +931,7 @@ function requestDeleteStep(id=selected) {
   dialog.showModal();$('#delete-step-cancel').focus();
 }
 function confirmDeleteStep() {
+  if (readOnly) return;
   const id=pendingDeletion, task=project.tasks.find(t=>t.id===id);
   if(!task){$('#delete-step-error').textContent='This step is no longer in the project.';return;}
   // Pin the task ID on opening, and validate before making any destructive edit.
@@ -908,6 +954,17 @@ function download(filename,content,type='text/plain') {
 function exportBackup(format) {
   download(`project.${format}`,format==='json'?JSON.stringify(project,null,2)+'\n':toYaml(project)+'\n',format==='json'?'application/json':'application/yaml');
 }
+async function exportSvg() {
+  if (readOnly || mode !== 'server') return;
+  const button = $('#export-svg-option');
+  if (button.disabled) return;
+  button.disabled = true;
+  try {
+    const data = await request('/api/export/svg', {method:'POST',body:JSON.stringify({document:validateProject(project),layout_mode:'stages'})});
+    const name = (project.project.name.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,70) || 'research-flow') + '.svg';
+    download(name,data.svg,'image/svg+xml');
+  } finally { button.disabled = false; }
+}
 function portableHtml(snapshot) {
   if(!portableTemplate)throw Error('Use Save to save this project to its file.');
   const doc=new DOMParser().parseFromString(portableTemplate,'text/html');
@@ -918,12 +975,13 @@ function portableHtml(snapshot) {
 const connectionToken = readAccessToken(portable);
 
 async function request(path, options={}) {
+  if (portable) throw Error('This saved HTML does not connect to a server. Run Research Flow to edit the workflow.');
   const r=await fetch(path,{...options,headers:{'Content-Type':'application/json','X-Research-Flow':'1',...(connectionToken ? {'X-Research-Flow-Token':connectionToken} : {}),...options.headers},cache:'no-store',signal:AbortSignal.timeout(7000)});
   const data=await r.json();if(!r.ok){const e=Error(data.error||'Request failed.');e.status=r.status;throw e;}return data;
 }
 function alertFile(message,changed=false) { conflict=changed;$('#file-alert-text').textContent=message;$('#file-alert').hidden=!message;renderHeader(); }
 async function save() {
-  if(busy || ['loading','error'].includes(mode))return;
+  if(readOnly || busy || ['loading','error'].includes(mode))return;
   try {
     const snapshot=validateProject(project);
     if(mode==='preview') {
@@ -940,7 +998,7 @@ async function save() {
   finally {busy=false;renderHeader();}
 }
 async function loadDisk() {
-  if(!['server','error'].includes(mode))return;
+  if(portable || !['server','error'].includes(mode))return;
   if(dirty()&&!confirm('Reload this project and discard unsaved changes in this tab? Keep a draft copy first to preserve them.'))return;
   try {
     const data=await request('/api/project');project=ensurePositions(validateProject(data.document));baseline=JSON.stringify(project);revision=data.revision;filePath=data.file;
@@ -948,7 +1006,7 @@ async function loadDisk() {
   } catch(error){toast(error.message,true);}
 }
 async function checkExternal() {
-  if(!['server','error'].includes(mode)||busy||pollBusy||pointer||miniPointer||layerPointer||document.hidden||$('dialog[open]'))return;
+  if(portable||!['server','error'].includes(mode)||busy||pollBusy||pointer||miniPointer||layerPointer||document.hidden||$('dialog[open]'))return;
   pollBusy=true;
   try {
     const data=await request('/api/project');
@@ -1033,18 +1091,20 @@ const actions={
   'delete-card':el=>requestDeleteStep(el.dataset.id),
   'confirm-delete-step':confirmDeleteStep,
   'cancel-connect':()=>{connectFrom=null;updateConnectPrompt();renderEdges();},
-  'export-json':()=>exportBackup('json'),'export-yaml':()=>exportBackup('yaml'),
+  'export-json':()=>exportBackup('json'),'export-yaml':()=>exportBackup('yaml'),'export-svg':exportSvg,
   'close-dialog':el=>el.closest('dialog').close(),
-  help:()=>{$('#help-mode').textContent=mode==='server'?'Save writes to this project’s YAML file and backs up the previous version. Changes from your text editor are detected automatically.':'Changes live in this browser tab. Save copy downloads an editable HTML with your current work; reopen that copy to continue. YAML and JSON backups are available under More.';$('#help-dialog').showModal();},
+  help:()=>{$('#help-mode').textContent=readOnly?'This is a read-only snapshot. Run Research Flow with your workflow YAML file to edit it. Save refreshes the HTML beside that file; refresh this page to see the newer snapshot. This viewer works offline and does not connect to the editor.':mode==='server'?'Save writes to this project’s YAML file, backs up the previous version, and refreshes its interactive read-only HTML snapshot. Changes from your text editor are detected automatically. Export an SVG figure under More.':'Changes live in this browser tab. Save copy downloads an editable HTML with your current work; reopen that copy to continue. YAML and JSON backups are available under More.';$('#help-dialog').showModal();},
 };
+// Keep view-only actions explicit so future editor controls cannot modify snapshots.
+const viewerActions = new Set(['overview','focus','toggle-inspector','close-inspector','inspector-tab','select','toggle-children','view-list','layout','view-layers','layer-overview','layer-operation','layer-processing','layer-edge','layer-show-methods','layer-record-select','layer-fit','layer-zoom-in','layer-zoom-out','layer-zoom-reset','ideas-open','ideas-toggle','ideas-close','idea-toggle','idea-link','toggle-map','fit','zoom-in','zoom-out','zoom-reset','export-json','export-yaml','close-dialog','help']);
 document.addEventListener('click',event=>{
   if(event.detail!==0&&performance.now()<layerClickSuppressedUntil&&event.target.closest('#layer-canvas')){event.preventDefault();return;}
   const el=event.target.closest('[data-action]');
-  if(el && !el.disabled){event.preventDefault();const act=actions[el.dataset.action];if(act)Promise.resolve(act(el)).catch(e=>toast(e.message,true));}
+  if(el && !el.disabled){event.preventDefault();const act=actions[el.dataset.action];if(act && (!readOnly || viewerActions.has(el.dataset.action)))Promise.resolve(act(el)).catch(e=>toast(e.message,true));}
   if(!event.target.closest('.more-menu')||el)$('#more-menu').open=false;
   // Keyboard activation of connection handles uses native button semantics.
   const port=event.target.closest('[data-port]');
-  if(port && event.detail===0){if(port.dataset.port==='out'){connectFrom=port.dataset.id;updateConnectPrompt();}else if(connectFrom)connect(connectFrom,port.dataset.id);}
+  if(!readOnly && port && event.detail===0){if(port.dataset.port==='out'){connectFrom=port.dataset.id;updateConnectPrompt();}else if(connectFrom)connect(connectFrom,port.dataset.id);}
 });
 $('#project-title').addEventListener('input',e=>change(doc=>{doc.project.name=e.target.value;},{group:'project-name',inspector:false}));
 $('#project-title').addEventListener('blur',()=>{if(!project.project.name.trim())change(doc=>{doc.project.name='Untitled project';},{group:'project-name',inspector:false});});
@@ -1055,6 +1115,7 @@ $('#inspector').addEventListener('keydown',e=>{
   else if(e.key==='Escape'&&e.target.matches('input,textarea,select')){e.stopPropagation();e.target.blur();}
 });
 $('#inspector').addEventListener('input',e=>{
+  if (readOnly) return;
   const el=e.target;if(!el.dataset.field||!currentTask())return;
   const field=el.dataset.field,value=['inputs','outputs'].includes(field)?el.value.split('\n').map(x=>x.trim()).filter(Boolean):field==='title'&&!el.value.trim()?'Untitled step':el.value;
   change(doc=>{doc.tasks.find(t=>t.id===selected)[field]=value;},{group:`${selected}-${field}`,inspector:false});
@@ -1100,8 +1161,9 @@ $('#ideas-body').addEventListener('change',event=>{
 $('#layers-view').addEventListener('pointerdown',event=>{
   const viewport=event.target.closest('#layer-canvas'),node=event.target.closest('.flow-node');
   if(!viewport||event.button!==0||event.isPrimary===false||layerPointer)return;
-  if(!node&&event.target.closest('button,a,input,select,[data-action]'))return;
   layerClickSuppressedUntil=0;
+  if(readOnly&&node)return;
+  if(!node&&event.target.closest('button,a,input,select,[data-action]'))return;
   if(document.activeElement?.matches('input,textarea,select'))document.activeElement.blur();
   layerPointer={id:event.pointerId,type:node?'node':'pan',taskId:node?.dataset.id,
     x:event.clientX,y:event.clientY,camera:{...layerCamera},moved:false,
@@ -1116,6 +1178,7 @@ $('#layers-view').addEventListener('pointermove',event=>{
   if(!drag.moved)return;
   layerCamera.autoFit=false;
   if(drag.type==='node'){
+    if(readOnly)return;
     const origin=drag.positions[drag.taskId];
     drag.draft=layerPositionDraft(drag.before,drag.positions,drag.taskId,origin.x+Math.round(dx/drag.camera.zoom),origin.y+Math.round(dy/drag.camera.zoom));
     renderLayers();
@@ -1130,6 +1193,7 @@ function finishLayerPointer(event,cancelled=false) {
   const host=$('#layers-view');if(host.hasPointerCapture(event.pointerId))host.releasePointerCapture(event.pointerId);
   if(cancelled){layerCamera=drag.camera;renderLayers();return;}
   if(drag.type==='node'){
+    if(readOnly)return;
     if(drag.moved&&drag.draft){
       change(()=>drag.draft,{validate:true,inspector:false});
       if(!$('#inspector').hidden)renderInspector();
@@ -1167,6 +1231,7 @@ canvas.addEventListener('pointerdown',event=>{
   const hierarchy=event.target.closest('[data-hierarchy]'),bundle=event.target.closest('[data-bundle]');
   if(hierarchy){navigateTo(hierarchy.dataset.hierarchy);event.preventDefault();return;}
   if(bundle){revealBundle(bundle.dataset.bundle);event.preventDefault();return;}
+  if(readOnly && node){navigateTo(node.dataset.id);event.preventDefault();return;}
   if(port?.dataset.port==='out'){
     connectFrom=port.dataset.id;pointer={type:'connect',id:connectFrom,clientX:event.clientX,clientY:event.clientY,moved:false};updateConnectPrompt();
   } else if(connectFrom&&node){connect(connectFrom,node.dataset.id);event.preventDefault();return;}
@@ -1182,7 +1247,7 @@ canvas.addEventListener('pointermove',event=>{
   const dx=event.clientX-pointer.clientX,dy=event.clientY-pointer.clientY;
   if(Math.abs(dx)+Math.abs(dy)>3)pointer.moved=true;
   if(pointer.type==='pan'){transform.x=pointer.x+dx;transform.y=pointer.y+dy;applyTransform();}
-  if(pointer.type==='connect'&&pointer.moved){
+  if(!readOnly&&pointer.type==='connect'&&pointer.moved){
     const p=positionOf(pointer.id),{width:NODE_W,height:NODE_H}=taskSize(graphDocument().tasks.find(t=>t.id===pointer.id)),end=pointInWorld(event.clientX,event.clientY);renderEdges();
     $('#edges').insertAdjacentHTML('beforeend',`<path class="edge-preview" d="M ${p.x+NODE_W} ${p.y+NODE_H/2} C ${p.x+300} ${p.y+NODE_H/2}, ${end.x-60} ${end.y}, ${end.x} ${end.y}"/>`);
     const target=document.elementFromPoint(event.clientX,event.clientY)?.closest('.task-node');$$('.task-node').forEach(n=>n.classList.toggle('connect-target',n===target && n.dataset.id!==pointer.id));
@@ -1206,6 +1271,7 @@ function finishPointer(event,cancelled=false){
 }
 canvas.addEventListener('pointerup',e=>finishPointer(e));canvas.addEventListener('pointercancel',e=>finishPointer(e,true));
 canvas.addEventListener('dblclick',event=>{
+  if (readOnly) return;
   if($('.node-title-input')||controlTarget(event.target)||event.target.closest('[data-port],[data-node-action],.node-title-input,[data-edge],[data-hierarchy],[data-bundle]'))return;
   // Pointer capture and selection redraws can retarget dblclick to the canvas.
   const recent=lastNodeClick && performance.now()-lastNodeClick.time<600 && Math.hypot(event.clientX-lastNodeClick.x,event.clientY-lastNodeClick.y)<8;
@@ -1235,16 +1301,16 @@ document.addEventListener('keydown',e=>{
   if(ideasOpen&&$('#ideas-panel').contains(e.target))return;
   if(e.key.toLowerCase()==='f'){e.preventDefault();e.shiftKey?actions.focus():view==='layers'?fitLayerCanvas(true):fitGraph();}
   if(e.key.toLowerCase()==='o'){e.preventDefault();actions.overview();}
-  if(e.key.toLowerCase()==='n'){e.preventDefault();actions.add();}
+  if(!readOnly&&e.key.toLowerCase()==='n'){e.preventDefault();actions.add();}
   if(e.key==='?'){e.preventDefault();actions.help();}
-  if(['Delete','Backspace'].includes(e.key)&&selectedEdge){e.preventDefault();actions['delete-edge']();}
-  else if(['Delete','Backspace'].includes(e.key)&&e.target.matches('.task-node,.flow-node')){e.preventDefault();requestDeleteStep(e.target.dataset.id);}
+  if(!readOnly&&['Delete','Backspace'].includes(e.key)&&selectedEdge){e.preventDefault();actions['delete-edge']();}
+  else if(!readOnly&&['Delete','Backspace'].includes(e.key)&&e.target.matches('.task-node,.flow-node')){e.preventDefault();requestDeleteStep(e.target.dataset.id);}
   if(['Enter',' '].includes(e.key)&&e.target.matches('.task-node')){e.preventDefault();navigateTo(e.target.dataset.id);$('#inspector .title-input')?.focus();}
   if(['Enter',' '].includes(e.key)&&e.target.matches('[data-hierarchy]')){e.preventDefault();navigateTo(e.target.dataset.hierarchy);}
   if(['Enter',' '].includes(e.key)&&e.target.matches('[data-bundle]')){e.preventDefault();revealBundle(e.target.dataset.bundle);}
   if(['Enter',' '].includes(e.key)&&e.target.matches('[data-edge]')){e.preventDefault();selectEdge(e.target.dataset.edge);$('#connection-source')?.focus();}
   if(['Enter',' '].includes(e.key)&&e.target.matches('.layer-dependency-hit')){e.preventDefault();actions['layer-edge'](e.target);$('#connection-source')?.focus();}
-  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)&&e.target.matches('.flow-node')){
+  if(!readOnly&&['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)&&e.target.matches('.flow-node')){
     e.preventDefault();const id=e.target.dataset.id,position=layerPositionsSnapshot()[id],amount=e.shiftKey?40:10;
     if(position)moveLayerNode(id,position.x+(e.key==='ArrowRight'?amount:e.key==='ArrowLeft'?-amount:0),position.y+(e.key==='ArrowDown'?amount:e.key==='ArrowUp'?-amount:0),`layer-move-${id}`);
     $$('.flow-node').find(node=>node.dataset.id===id)?.focus({preventScroll:true});
@@ -1255,13 +1321,25 @@ document.addEventListener('keydown',e=>{
     next?.focus({preventScroll:true});if(next)keepSelectedVisible(next.dataset.id);
   }
 });
-window.addEventListener('beforeunload',e=>{if(dirty()){e.preventDefault();e.returnValue='';}});
+window.addEventListener('beforeunload',e=>{if(!readOnly&&dirty()){e.preventDefault();e.returnValue='';}});
 new ResizeObserver(()=>applyTransform()).observe(canvas);
 $$('[data-icon]').forEach(el=>el.innerHTML=icon(el.dataset.icon));
 $('#add-button').setAttribute('aria-label','Add step');
+document.body.classList.toggle('read-only',readOnly);
+$$('[data-edit-only]').forEach(el=>el.hidden=readOnly);
+$('#viewer-help').hidden=!readOnly;
+if (readOnly) {
+  $('#project-title').readOnly=true;
+  $('#project-title').title='Project title · Read-only snapshot';
+  $('.canvas-column').setAttribute('aria-label','Workflow viewer');
+  canvas.setAttribute('aria-label','Workflow viewer. Select a step to read its details. Drag the background to pan; scroll to zoom.');
+  $('#empty-state h1').textContent='No steps saved yet.';
+  $('#empty-state p').textContent='Run Research Flow to add steps to this workflow.';
+  $('#empty-state [data-action="add"]').hidden=true;
+}
 refresh();
 async function init(){
-  if(portable)mode='preview';
+  if(portable)mode=readOnly?'viewer':'preview';
   else{
     try{
       const data=await request('/api/project');project=ensurePositions(validateProject(data.document));baseline=JSON.stringify(project);revision=data.revision;filePath=data.file;mode='server';
@@ -1270,7 +1348,7 @@ async function init(){
   selected=null;selectedEdge=null;closeInspector();switchView(project.project.presentation==='layers'?'layers':'graph');refresh();fitGraph();
   frameGraphOpening();
   logoMotion.play('load');
-  setInterval(checkExternal,3500);
+  if(!portable)setInterval(checkExternal,3500);
 }
 init();
 

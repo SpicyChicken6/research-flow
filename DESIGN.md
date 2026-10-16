@@ -67,6 +67,9 @@
   must not change project data. Graph shows only high-level overview steps and their
   direct dependencies; its layout, focus, counts, and minimap use that same scope.
   Operations and processing remain in Layers and the full Step list.
+- Graph connections change dependencies only; keep layer, membership, and hierarchy
+  unchanged so connecting a legacy overview cannot make it disappear. Existing
+  unambiguous branch adoption remains available when connecting in Layers or Step list.
 - Entering Graph from detailed work selects its owning overview, when assigned.
   Opening detailed work from Graph switches to Layers. Graph creates overview
   steps; its Add operation control creates detailed work in Layers.

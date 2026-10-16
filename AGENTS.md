@@ -5,7 +5,9 @@
 - Keep blank-card insertion, graph connections, child branches, focus/overview,
   global minimap, delete confirmation, undo/redo and the fixed-arrow logo animation.
 - Project hierarchy (`parent_id`) is different from dependencies (`depends_on`).
-  Branch adoption is only for new, unambiguous connections and is undoable atomically.
+  Graph connections add dependencies without changing hierarchy or workflow layers.
+  In other views, branch adoption is only for new, unambiguous connections and is
+  undoable atomically.
 - Do not mutate project data while rendering, focusing, collapsing or animating.
 - Preserve unknown metadata. Read/migration must not rewrite a disk file without Save.
 - The source checkout contains examples, not user workflows. Preserve user data and

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""0.7.1 regression: global map, branch adoption, dialog deletion, title accent.
+"""Global map, explicit overview branches, dialog deletion, and title accent.
 Tests use disposable projects; no real user's project is modified.
 """
 from pathlib import Path
@@ -11,6 +11,10 @@ ROOT=Path(__file__).resolve().parents[2];sys.path.insert(0,str(ROOT))
 from server import parse_project,ProjectStore,make_handler
 OUT=ROOT/'test-results';OUT.mkdir(exist_ok=True)
 HTML=(ROOT/'dist/research-flow.html').read_text()
+# Exercise nested overview branches; inferred operations have separate Layers coverage.
+FIXTURE=parse_project((ROOT/'examples/research-project.yaml').read_text())
+for entry in FIXTURE['tasks']:entry['layer']='overview'
+HTML=re.sub(r'(<script id="initial-project" type="application/json">).*?(</script>)',lambda m:m[1]+json.dumps(FIXTURE).replace('<','\\u003c')+m[2],HTML,flags=re.S)
 CHECKS=[];ERRORS=[]
 def check(value,label):
  if not value:raise AssertionError(label)
@@ -70,7 +74,7 @@ with sync_playwright() as pw:
  p.locator('[data-action=view-list]').click();check(p.locator('#minimap-wrap').is_hidden(),'map does not float over the text-only Step list')
  p.locator('#overview-button').click();check(p.locator('#minimap-wrap').is_visible(),'returning to graph restores minimap')
  p.close()
- # Add connected step, as well as freehand links, now inherit parentage.
+ # Add connected step inherits parentage; Graph dependency edits preserve it.
  p=opened(b);base=snap(p);go(p,'preparation');p.locator('[data-action=add-after]').click();d=snap(p);id=d['tasks'][-1]['id']
  check(task(d,id)['parent_id']=='analysis','Add connected step on a child inherits the same parent')
  check(task(d,id)['depends_on']==['preparation'],'only the requested child dependency is added')
@@ -82,23 +86,23 @@ with sync_playwright() as pw:
  check(task(tail,tailid)['parent_id']=='analysis' and task(tail,tailid)['depends_on']==[id],'a chain continues in the same branch without direct main-step dependencies')
  p.close()
  p=opened(b);id,before=add(p);overview(p);draglink(p,'preparation',id);d=snap(p)
- check(task(d,id)['parent_id']=='analysis' and task(d,id)['depends_on']==['preparation'],'dragging a child dependency to an ungrouped card adopts it')
- check(d['layout']==before['layout'],'automatic membership does not rearrange saved positions')
- check(p.locator(f'.task-node[data-id={id}]').evaluate('e=>e.classList.contains("child-node")'),'drag connection updates child styling immediately')
- p.locator('#undo-button').click();check(snap(p)==before,'undo removes drag dependency and adoption atomically')
- p.locator('#redo-button').click();check(snap(p)==d,'redo restores both parts atomically')
+ check(not task(d,id).get('parent_id') and task(d,id)['depends_on']==['preparation'],'dragging a Graph dependency keeps an ungrouped overview independent')
+ check(d['layout']==before['layout'],'Graph connections do not rearrange saved positions')
+ check(p.locator(f'.task-node[data-id={id}]').evaluate('e=>!e.classList.contains("child-node")'),'Graph connection preserves the root card role')
+ p.locator('#undo-button').click();check(snap(p)==before,'undo removes the Graph dependency without changing hierarchy')
+ p.locator('#redo-button').click();check(snap(p)==d,'redo restores the dependency and preserves hierarchy')
  edge(p,f'preparation|{id}');p.locator('[data-action=delete-edge]').click();d=snap(p)
- check(task(d,id)['parent_id']=='analysis' and not task(d,id)['depends_on'],'removing a dependency does not discard chosen branch membership')
+ check(not task(d,id).get('parent_id') and not task(d,id)['depends_on'],'removing a Graph dependency keeps the overview independent')
  p.close()
  p=opened(b);id,before=add(p);go(p,'preparation');p.locator('#add-dependency').select_option(id);d=snap(p)
- check(task(d,id)['parent_id']=='analysis' and id in task(d,'preparation')['depends_on'],'incoming prerequisites via Details also inherit the parent branch')
- p.locator('#undo-button').click();check(snap(p)==before,'Details connection and parentage undo together')
+ check(not task(d,id).get('parent_id') and id in task(d,'preparation')['depends_on'],'incoming Graph prerequisites via Details preserve parent branches')
+ p.locator('#undo-button').click();check(snap(p)==before,'Details connection undoes without changing hierarchy')
  overview(p);p.locator(f'.port.out[data-id={id}]').focus();p.keyboard.press('Enter');p.locator('.port.in[data-id=preparation]').focus();p.keyboard.press('Enter');d=snap(p)
- check(task(d,id)['parent_id']=='analysis','keyboard connections use the same branch inheritance rule')
+ check(not task(d,id).get('parent_id') and id in task(d,'preparation')['depends_on'],'keyboard Graph connections also preserve parent branches')
  p.close()
  p=opened(b);id,before=add(p);go(p,id);p.locator('#add-dependency').select_option('preparation');id2,_=add(p);overview(p);edge(p,f'preparation|{id}');before=snap(p);p.locator('#connection-target').select_option(id2);p.locator('#connection-form button[type=submit]').click();d=snap(p)
- check(task(d,id2)['parent_id']=='analysis' and task(d,id2)['depends_on']==['preparation'],'connection rewiring adopts the new ungrouped endpoint')
- check(task(d,id)['parent_id']=='analysis' and not task(d,id)['depends_on'],'rewiring preserves the previous endpoint’s established parent')
+ check(not task(d,id2).get('parent_id') and task(d,id2)['depends_on']==['preparation'],'Graph rewiring connects the new endpoint without assigning a parent')
+ check(not task(d,id).get('parent_id') and not task(d,id)['depends_on'],'rewiring also preserves the previous endpoint’s parent state')
  p.locator('#undo-button').click();check(snap(p)==before,'one undo restores edge and parent state after rewiring')
  # Preserve existing roots and separate groups.
  overview(p);go(p,'other' if any(t['id']=='other' for t in before['tasks']) else 'synthesis');p.locator('#add-dependency').select_option('metadata');d=snap(p)
@@ -163,7 +167,7 @@ with sync_playwright() as pw:
  # Real temporary disk + HTTP, bridged into a browser page because file navigation
  # is blocked by this environment. The shipped runtime does not contain the bridge.
  with TemporaryDirectory() as td:
-  path=Path(td)/'project.yaml';path.write_text((ROOT/'examples/research-project.yaml').read_text());httpd=ThreadingHTTPServer(('127.0.0.1',0),make_handler(ProjectStore(path)));threading.Thread(target=httpd.serve_forever,daemon=True).start()
+  path=Path(td)/'project.yaml';path.write_text(json.dumps(FIXTURE));httpd=ThreadingHTTPServer(('127.0.0.1',0),make_handler(ProjectStore(path)));threading.Thread(target=httpd.serve_forever,daemon=True).start()
   p=b.new_page(viewport={'width':1600,'height':1000},accept_downloads=True,reduced_motion='reduce');p.set_default_timeout(8000);p.on('pageerror',lambda e:ERRORS.append(str(e)))
   def bridge(url,options=None):
    options=options or {};assert url.startswith('/api/');c=http.client.HTTPConnection('127.0.0.1',httpd.server_port);c.request(options.get('method') or 'GET',url,body=options.get('body'),headers=options.get('headers') or {});r=c.getresponse();d={'status':r.status,'text':r.read().decode()};c.close();return d

@@ -24,8 +24,12 @@ FIXTURE = parse_project(json.dumps({
     'tasks': [
         {'id': 'literature', 'title': 'Review literature', 'step_number': 1},
         {'id': 'analysis', 'title': 'Analyze data', 'step_number': 2},
-        {'id': 'helper', 'title': 'Check data sources', 'parent_id': 'analysis'},
-        {'id': 'nested', 'title': 'Record provenance', 'parent_id': 'helper'},
+        {'id': 'helper', 'title': 'Check evidence scope', 'layer': 'overview', 'parent_id': 'analysis'},
+        {'id': 'nested', 'title': 'Confirm evidence decision', 'layer': 'overview', 'parent_id': 'helper'},
+        {'id': 'data_work', 'title': 'Process dataset', 'layer': 'operation',
+         'overview_id': 'analysis', 'parent_id': 'analysis'},
+        {'id': 'scale', 'title': 'Scale counts', 'layer': 'processing',
+         'operation_id': 'data_work', 'parent_id': 'data_work'},
         {'id': 'design', 'title': 'Design study', 'step_number': 3,
          'depends_on': ['analysis', 'literature']},
         {'id': 'report', 'title': 'Write report', 'step_number': 4,
@@ -37,11 +41,14 @@ FIXTURE = parse_project(json.dumps({
         'positions': {
             'literature': {'x': 60, 'y': 60}, 'analysis': {'x': 60, 'y': 340},
             'helper': {'x': 74, 'y': 570}, 'nested': {'x': 74, 'y': 770},
+            'data_work': {'x': 500, 'y': 850}, 'scale': {'x': 500, 'y': 1050},
             'design': {'x': 720, 'y': 360}, 'report': {'x': 1380, 'y': 360},
             'outside': {'x': 1380, 'y': 850},
         },
     },
 }))
+OVERVIEW_IDS = {task['id'] for task in FIXTURE['tasks']
+                if task.get('layer', 'operation' if task.get('parent_id') else 'overview') == 'overview'}
 
 
 def check(value, label):
@@ -90,7 +97,7 @@ def same_camera(a, b):
 
 def view_state(page):
     return page.evaluate('''() => ({
-        layout: document.querySelector('#layout-control [aria-pressed=true]').dataset.layout,
+        steps: [...document.querySelectorAll('.stage-column h2')].map(el => el.textContent),
         focus: document.querySelector('#focus-button').getAttribute('aria-pressed'),
         selected: document.querySelector('.mini-node.is-selected')?.dataset.miniTask,
         visible: [...document.querySelectorAll('.task-node:not([hidden])')].map(el => el.dataset.id),
@@ -181,25 +188,27 @@ def run():
         browser = playwright.chromium.launch(
             executable_path=os.environ.get('CHROMIUM_PATH') or shutil.which('chromium'),
             headless=True, args=['--no-sandbox'])
-        for mode in ['stages', 'freeform']:
-            page = opened(browser)
-            page.locator(f'#layout-{mode}').click()
-            check(page.locator('.task-node .task-index,.task-node .step-number-button').count() == 0,
-                  f'{mode}: main and child cards omit small step-number labels')
-            if mode == 'stages':
-                page.screenshot(path=str(OUT / 'minimap-overview.png'))
-            # A central, magnified viewport makes rectangle motion observable without clipping.
-            for _ in range(10):
-                page.locator('[data-action=zoom-in]').click()
-            page.locator('#minimap').click(position={'x': 85, 'y': 45})
-            mouse_drag(page, 'viewport', label=f'{mode} viewport drag')
-            mouse_drag(page, 'analysis', label=f'{mode} miniature-step drag')
-            mouse_drag(page, 'blank', label=f'{mode} blank-map drag')
-            mouse_drag(page, 'caption', label=f'{mode} caption drag')
-            mouse_drag(page, 'design', dx=-210, dy=-140,
-                       label=f'{mode} outside-bounds drag', beyond=True)
-            check(snapshot(page) == FIXTURE, f'{mode}: minimap navigation leaves saved data unchanged')
-            page.close()
+        page = opened(browser)
+        check(page.locator('#layout-control,#layout-freeform').count() == 0,
+              'Graph exposes no free-positioning layout control')
+        check(set(page.locator('.task-node').evaluate_all('nodes=>nodes.map(node=>node.dataset.id)')) == OVERVIEW_IDS
+              and set(page.locator('.mini-node').evaluate_all('nodes=>nodes.map(node=>node.dataset.miniTask)')) == OVERVIEW_IDS,
+              'Graph and minimap show only overview steps, including explicitly classified overview children')
+        check(page.locator('.task-node .task-index,.task-node .step-number-button').count() == 0,
+              'overview cards omit small step-number labels while columns retain their numbers')
+        page.screenshot(path=str(OUT / 'minimap-overview.png'))
+        # A central, magnified viewport makes rectangle motion observable without clipping.
+        for _ in range(10):
+            page.locator('[data-action=zoom-in]').click()
+        page.locator('#minimap').click(position={'x': 85, 'y': 45})
+        mouse_drag(page, 'viewport', label='ordered Graph viewport drag')
+        mouse_drag(page, 'analysis', label='ordered Graph miniature-step drag')
+        mouse_drag(page, 'blank', label='ordered Graph blank-map drag')
+        mouse_drag(page, 'caption', label='ordered Graph caption drag')
+        mouse_drag(page, 'design', dx=-210, dy=-140,
+                   label='ordered Graph outside-bounds drag', beyond=True)
+        check(snapshot(page) == FIXTURE, 'minimap navigation preserves hidden operations and all saved coordinates')
+        page.close()
 
         page = opened(browser)
         select(page, 'analysis')
@@ -210,7 +219,7 @@ def run():
         page.locator('.task-node[data-id=analysis] .children-toggle').click()
         select(page, 'design')
         page.locator('#focus-button').click()
-        check(page.locator('.task-node:not([hidden])').count() < len(FIXTURE['tasks']),
+        check(page.locator('.task-node:not([hidden])').count() < len(OVERVIEW_IDS),
               'fixture has a filtered Focus view and a collapsed branch')
         mouse_drag(page, 'outside', label='off-focus miniature-step drag')
         mouse_drag(page, 'nested', label='collapsed-descendant drag')
@@ -227,8 +236,8 @@ def run():
         check(page.locator('.task-node[data-id=nested]').is_visible(),
               'a real click still reveals a collapsed descendant')
         page.locator('#list-button').click()
-        check(page.locator('.table-number').all_text_contents() == ['1', '2', '2.1', '2.1.1', '3', '4', '5'],
-              'Step list retains hierarchical numbering')
+        check(page.locator('.table-number').all_text_contents() == ['1', '2', '2.1', '2.1.1', '2.2', '2.2.1', '3', '4', '5'],
+              'Step list retains hierarchical numbering and operations omitted from Graph')
         page.close()
 
         for ending in ['pointercancel', 'lostpointercapture']:
@@ -282,7 +291,7 @@ def run():
             mouse_drag(page, 'outside', label=f'drag before {key} overview')
             page.locator('#minimap-wrap').focus()
             page.keyboard.press(key)
-            check(page.locator('.task-node:not([hidden])').count() == len(FIXTURE['tasks'])
+            check(page.locator('.task-node:not([hidden])').count() == len(OVERVIEW_IDS)
                   and page.locator('#focus-button').get_attribute('aria-pressed') == 'false',
                   f'{key} on the minimap still restores an expanded global overview')
             page.close()
