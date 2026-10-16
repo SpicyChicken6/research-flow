@@ -59,7 +59,11 @@ class Relay(socketserver.ThreadingTCPServer):
 def run():
     with tempfile.TemporaryDirectory() as temp:
         path = Path(temp) / 'workflow.yaml'
-        path.write_bytes((ROOT / 'examples/research-project.yaml').read_bytes())
+        # Keep this HTTP/authentication suite focused on eight visible overview steps.
+        document = parse_project((ROOT / 'examples/research-project.yaml').read_text())
+        for task in document['tasks']:
+            task['layer'] = 'overview'
+        path.write_text(json.dumps(document))
         relay = Relay(('127.0.0.1', 0), Forward)
         local_port = relay.server_address[1]
         proc = subprocess.Popen([sys.executable, str(ROOT / 'server.py'), '--project', str(path),

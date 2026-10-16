@@ -1,218 +1,498 @@
 #!/usr/bin/env python3
-"""Browser checks for real child cards. All projects used here are disposable."""
+"""Hierarchy, overview navigation and detailed child work in disposable projects."""
+from copy import deepcopy
+from http.server import ThreadingHTTPServer
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from http.server import ThreadingHTTPServer
-import json,re,sys,threading,http.client,os,shutil,time
-from playwright.sync_api import sync_playwright, expect
-ROOT=Path(__file__).resolve().parents[2];sys.path.insert(0,str(ROOT))
-from server import parse_project,ProjectStore,make_handler
-OUT=ROOT/'test-results';OUT.mkdir(exist_ok=True)
-HTML=(ROOT/'dist/research-flow.html').read_text()
-CHECKS=[];ERRORS=[];LAST_EXPORT=0
-def check(value,label):
- if not value:raise AssertionError(label)
- CHECKS.append(label);print('PASS',label,flush=True)
-def opened(b,html=HTML,width=1600,height=1000):
- p=b.new_page(viewport={'width':width,'height':height},accept_downloads=True,reduced_motion='reduce');p.set_default_timeout(5000);p.on('pageerror',lambda e:ERRORS.append(str(e)));p.set_content(html,wait_until='load');expect(p.locator('#save-button')).to_be_enabled();return p
-def snap(p):
- global LAST_EXPORT
- # Chromium limits download bursts; pace snapshot exports in this long suite.
- time.sleep(max(0,1-(time.monotonic()-LAST_EXPORT)))
- p.locator('#more-menu summary').click()
- with p.expect_download() as d:p.locator('[data-action=export-json]').click()
- LAST_EXPORT=time.monotonic()
- return json.loads(Path(d.value.path()).read_text())
-def task(doc,id):return next(t for t in doc['tasks'] if t['id']==id)
-def go(p,id):
- p.locator(f'.task-node[data-id="{id}"]').focus();p.keyboard.press('Enter');expect(p.locator('#inspector')).to_be_visible()
-def overview(p):
- if p.locator('#inspector').is_visible():p.locator('[data-action=close-inspector]').click()
- p.locator('#overview-button').click()
-def newchild(p,id):
- go(p,id);p.locator('#inspector [data-action=add-child]').click();d=snap(p);return d['tasks'][-1]['id'],d
-def rect(p,id):return p.locator(f'.task-node[data-id="{id}"]').bounding_box()
-def drag_node(p,id,dx=45,dy=24):
- a=rect(p,id);p.mouse.move(a['x']+a['width']*.4,a['y']+a['height']*.4);p.mouse.down();p.mouse.move(a['x']+a['width']*.4+dx,a['y']+a['height']*.4+dy,steps=10);p.mouse.up()
-def edge(p,key):
- p.locator(f'[data-edge="{key}"]').focus();p.keyboard.press('Enter');expect(p.locator('#connection-form')).to_be_visible()
-with sync_playwright() as pw:
- b=pw.chromium.launch(executable_path=os.environ.get('CHROMIUM_PATH') or shutil.which('chromium'),headless=True,args=['--no-sandbox'])
- p=opened(b);base=snap(p)
- check(p.locator('.task-node').count()==8,'eight ordinary cards make up the sample project')
- check(p.locator('.child-node').count()==5 and p.locator('.hierarchy-hit').count()==5,'five children have real hierarchy branches')
- check(p.locator('.edge-hit[data-edge]').count()==4,'only explicit dependencies have arrows')
- check(p.locator('.substeps-section,.substep-row,.node-substeps,[data-action=add-substep]').count()==0,'previous checklist editor and badges are absent')
- check(not p.locator('#inspector').is_visible(),'initial view remains a quiet canvas without details')
- check(p.locator('.task-node .task-index,.task-node .step-number-button').count()==0,'main and child cards omit step-number badges')
- root=rect(p,'analysis');child=rect(p,'preparation');grand=rect(p,'metadata')
- check(child['width']<root['width'] and child['height']<root['height'],'child cards are physically smaller, not a scaled canvas')
- check(abs(child['width']-grand['width'])<.1 and abs(child['height']-grand['height'])<.1,'grandchildren keep the same readable child dimensions')
- check(p.locator('.child-node h3').first.evaluate('e=>parseFloat(getComputedStyle(e).fontSize)')>=14,'child titles retain at least 14 px CSS type')
- p.screenshot(path=str(OUT/'children-overview.png'))
- p.locator('#add-button').click();d=snap(p);new=d['tasks'][-1]
- check(len(d['tasks'])==9 and new['title']=='Untitled step' and not new.get('parent_id'),'Add step still places an independent blank block immediately')
- check(not p.locator('#inspector').is_visible() and p.locator('dialog[open]').count()==0,'blank creation does not open a dialog or inspector')
- p.locator('#undo-button').click();check(snap(p)==base,'undo reverses blank insertion')
- childid,d=newchild(p,'analysis')
- check(task(d,childid)['parent_id']=='analysis' and task(d,childid)['depends_on']==[],'Add child assigns parent only, never an implicit dependency')
- check(not p.locator('#inspector').is_visible(),'child creation follows place-first, edit-later behavior')
- go(p,childid);p.locator('[data-field=title]').fill('Confirm provenance');p.locator('[data-field=goal]').fill('Validate source versions');p.locator('[data-field=status]').select_option('in_progress');p.locator('#resources-tab').click();p.locator('[data-field=notes]').fill('Keep records\nSecond line');p.locator('[data-field=inputs]').fill('data/source.tsv');p.locator('[data-field=outputs]').fill('notes/provenance.md')
- d=snap(p);check(task(d,childid)['notes']=='Keep records\nSecond line' and task(d,childid)['inputs']==['data/source.tsv'],'child notes and file references use the existing task editor')
- p.locator('#plan-tab').click();p.locator('#inspector [data-action=add-child]').click();d=snap(p);grandchild=d['tasks'][-1]['id']
- check(task(d,grandchild)['parent_id']==childid,'a newly added child can immediately have its own child')
- go(p,grandchild);p.locator('[data-field=title]').fill('Record source checksum');p.locator('[data-field=status]').select_option('done');d=snap(p)
- check(task(d,childid)['status']=='in_progress' and task(d,'analysis')['status']=='in_progress','descendant completion does not overwrite parent status')
- p.locator('#parent-step').select_option('preparation');d=snap(p);check(task(d,grandchild)['parent_id']=='preparation','Part of can move an existing step to a different parent')
- p.locator('#undo-button').click();check(task(snap(p),grandchild)['parent_id']==childid,'undo restores prior parentage')
- # Parent candidates exclude self and descendants.
- go(p,'analysis');opts=p.locator('#parent-step option').evaluate_all('es=>es.map(e=>e.value)')
- check('analysis' not in opts and 'preparation' not in opts and grandchild not in opts,'Parent selector excludes self and all descendants')
- go(p,grandchild);p.locator('#parent-step').select_option('');d=snap(p)
- check(not task(d,grandchild).get('parent_id') and not p.locator(f'.task-node[data-id={grandchild}]').evaluate("e=>e.classList.contains('child-node')"),'clearing parent promotes a card to main-step size')
- p.locator('#undo-button').click();go(p,grandchild);p.locator('#add-dependency').select_option('question');d=snap(p)
- check(task(d,grandchild)['depends_on']==['question'] and task(d,grandchild)['parent_id']==childid,'dependency editing does not alter hierarchy')
- # Save-copy roundtrip.
- with p.expect_download() as dl:p.locator('#save-button').click()
- saved=Path(dl.value.path()).read_text();q=opened(b,saved)
- check(snap(q)==d,'Save copy reopens with hierarchy, positions, statuses and details intact')
- check(q.locator('.child-node').count()==7,'saved copy renders the new child cards without the old checklist')
- q.close();p.close()
- # Canvas shortcuts, inline names, editable root numbers, and the hierarchy list.
- p=opened(b);base=snap(p)
- p.locator('#canvas').dblclick(position={'x':400,'y':120});check(len(snap(p)['tasks'])==9,'double-clicking empty canvas still adds exactly one step')
- p.locator('#undo-button').click();check(snap(p)==base,'blank canvas insertion remains undoable')
- check(p.locator('#arrange-button').is_visible() and p.locator('#list-button').is_visible(),'Arrange and Step list are directly on the canvas toolbar')
- p.locator('.task-node[data-id=analysis] h3').dblclick();expect(p.locator('.node-title-input')).to_be_focused()
- p.locator('.node-title-input').fill('Updated analysis');p.locator('.node-title-input').press('Enter')
- renamed=snap(p);check(task(renamed,'analysis')['title']=='Updated analysis','double-click renames the main step directly on its card')
- check(renamed['layout']==base['layout'] and len(renamed['tasks'])==len(base['tasks']),'renaming neither moves cards nor inserts an extra blank step')
- p.locator('#undo-button').click();check(snap(p)==base,'one undo reverses the complete inline rename')
- p.locator('#redo-button').click();check(snap(p)==renamed,'redo restores the inline rename')
- overview(p);p.locator('.task-node[data-id=metadata] h3').dblclick();expect(p.locator('.node-title-input')).to_be_focused()
- p.locator('.node-title-input').fill('Cancelled name');p.locator('.node-title-input').press('Escape');check(snap(p)==renamed,'Escape cancels a child-card rename without changing data')
- overview(p);p.locator('.task-node[data-id=metadata] h3').dblclick();p.locator('.node-title-input').fill('Check provenance')
- p.locator('#list-button').click();renamed=snap(p);check(task(renamed,'metadata')['title']=='Check provenance','clicking away commits the inline name')
- check(p.locator('#list-button').get_attribute('aria-pressed')=='true','list toolbar button indicates the current view')
- check(p.locator('.table-task').evaluate_all('es=>es.map(e=>e.dataset.id)')==['question','analysis','preparation','metadata','batches','model','sensitivity','synthesis'],'interleaved source tasks appear grouped by parent in the list')
- check(p.locator('#list-view tr[data-depth="2"]').count()==3,'list gives grandchildren their own indentation level')
- indents=p.locator('.table-step').evaluate_all('es=>es.map(e=>parseFloat(getComputedStyle(e).paddingInlineStart))')
- check(indents==[0,0,22,44,44,22,44,0],'list indentation increases consistently at each hierarchy level')
- check(snap(p)==renamed,'opening the hierarchical list preserves the saved task order and data')
- p.screenshot(path=str(OUT/'hierarchical-list.png'))
- overview(p);go(p,'analysis');p.locator('#resources-tab').click();p.locator('#plan-tab').click();p.locator('#step-number').focus();expect(p.locator('#step-number')).to_be_focused()
- p.locator('#step-number').fill('1');p.locator('#step-number').press('Enter');numbered=snap(p)
- check(task(numbered,'analysis')['step_number']==1 and task(numbered,'question')['step_number']==2,'choosing an occupied number swaps main-step numbers')
- p.locator('#list-button').click()
- check(p.locator('tr:has(.table-task[data-id=metadata]) .table-number').inner_text()=='1.1.1','renumbering updates the grandchild number in Step list immediately')
- overview(p);go(p,'analysis')
- check(numbered['layout']==renamed['layout'],'number editing preserves canvas positions')
- p.locator('#step-number').fill('0');p.locator('#step-number').press('Enter');check(snap(p)==numbered,'invalid number edits do not change workflow data')
- p.locator('#undo-button').click();check(snap(p)==renamed,'one undo restores both main numbers and descendant labels')
- p.locator('#redo-button').click();p.locator('#list-button').click()
- check(p.locator('.table-number').all_text_contents()==['1','1.1','1.1.1','1.1.2','1.2','1.2.1','2','3'],'list sorts main steps by number and derives all child numbers')
- with p.expect_download() as download:p.locator('#save-button').click()
- q=opened(b,Path(download.value.path()).read_text());check(snap(q)==numbered,'saved HTML reopens with edited names and main-step numbers');q.close()
- overview(p);go(p,'question');p.locator('[data-action=close-inspector]').click()
- p.locator('.task-node[data-id=preparation] .node-delete').click();expect(p.locator('#delete-step-dialog')).to_be_visible()
- check('Prepare the dataset' in p.locator('#delete-step-name').inner_text(),'card delete targets that card, even when another step was selected')
- p.locator('#delete-step-cancel').click();check(snap(p)==numbered,'canceling card deletion leaves the workflow intact')
- p.locator('.task-node[data-id=preparation] .node-delete').click();p.locator('#confirm-delete-step').click();deleted=snap(p)
- check(not any(t['id']=='preparation' for t in deleted['tasks']) and task(deleted,'metadata')['parent_id']=='analysis','card deletion removes only the parent and promotes its children')
- p.locator('#undo-button').click();check(snap(p)==numbered,'card deletion is undoable with hierarchy and numbers restored')
- p.screenshot(path=str(OUT/'canvas-controls.png'));p.close()
- p=opened(b,width=360,height=780)
- for id in ['arrange-button','list-button']:
-  box=p.locator('#'+id).bounding_box();check(box is not None and box['x']>=0 and box['x']+box['width']<=360,id+' remains accessible on a narrow screen')
- p.locator('#list-button').click();check(p.locator('#list-view table').bounding_box()['y']>p.locator('#list-button').bounding_box()['y']+31,'mobile list rows start below the toolbar')
- p.screenshot(path=str(OUT/'hierarchical-list-mobile.png'));p.close()
- # View operations, collapsed dependencies and drag behavior.
- p=opened(b);base=snap(p);go(p,'preparation');p.locator('#focus-button').click()
- check(p.locator('.task-node[data-id=metadata]').is_visible() and p.locator('.task-node[data-id=batches]').is_visible(),'Focus includes the selected step’s descendants')
- check(p.locator('.task-node[data-id=analysis]').is_visible(),'Focus retains the selected step’s parent context')
- check(snap(p)==base,'Focus leaves hierarchy, data and layout unchanged')
- p.screenshot(path=str(OUT/'children-focus.png'))
- check(p.locator('.task-node[data-id=model] .children-toggle').get_attribute('aria-expanded')=='false','off-focus descendants are honestly marked as hidden')
- p.locator('.task-node[data-id=model] .children-toggle').click()
- check(p.locator('.task-node[data-id=sensitivity]').is_visible(),'expanding a dependency neighbor brings its children into Focus')
- check(snap(p)==base,'changing the focused branch changes presentation only')
- overview(p)
- go(p,'synthesis');p.locator('#add-dependency').select_option('metadata');base=snap(p);overview(p)
- p.locator('.task-node[data-id=analysis] .children-toggle').click()
- check(p.locator('.task-node:visible').count()==3,'collapsing the main parent hides all levels of descendants')
- check(p.locator('[data-bundle="analysis|synthesis"] text').text_content()=='2 hidden links','collapsed boundary exposes a bundled count of actual dependencies')
- check(snap(p)==base,'collapsing and bundled links do not create fake parent dependencies')
- p.locator('.bundle-label[data-bundle="analysis|synthesis"]').focus();p.keyboard.press('Enter')
- check(p.locator('.task-node[data-id=metadata]').is_visible() and p.locator('[data-edge="metadata|synthesis"]').count()==1,'opening a hidden-link label reveals its true endpoints')
- check(snap(p)==base,'revealing a dependency bundle does not mutate project data')
- overview(p);p.locator('.task-node[data-id=preparation] .children-toggle').click();check(p.locator('.task-node:visible').count()==6,'nested collapse hides just that subtree')
- p.locator('.task-node[data-id=preparation] .children-toggle').click();check(p.locator('.task-node:visible').count()==8,'nested expansion restores its descendant cards')
- # These assertions compare saved coordinate deltas; stage-to-freeform capture
- # is exercised separately by stage_checks.py.
- p.locator('#layout-freeform').click()
- check(p.locator('.task-node .task-index,.task-node .step-number-button').count()==0,'freeform cards also omit step-number badges')
- base=snap(p);drag_node(p,'preparation');moved=snap(p)
- delta={k:moved['layout']['positions']['preparation'][k]-base['layout']['positions']['preparation'][k] for k in ['x','y']}
- check(delta['x']!=0,'dragging parent changes its position')
- check(all(all(moved['layout']['positions'][id][k]-base['layout']['positions'][id][k]==delta[k] for k in ['x','y']) for id in ['metadata','batches']),'parent drag moves its whole subtree by the same offset')
- check(moved['layout']['positions']['model']==base['layout']['positions']['model'],'dragging parent does not move dependency neighbors')
- check(not p.locator('#inspector').is_visible(),'branch drag does not open details mid-gesture')
- p.locator('#undo-button').click();check(snap(p)==base,'one undo restores the entire dragged branch')
- p.locator('#redo-button').click();check(snap(p)==moved,'redo restores whole-branch movement');p.locator('#undo-button').click()
- # Drag a dependency from a child; endpoints must use child size.
- overview(p);a=p.locator('.port.out[data-id=batches]').bounding_box();z=p.locator('.port.in[data-id=model]').bounding_box();p.mouse.move(a['x']+a['width']/2,a['y']+a['height']/2);p.mouse.down();p.mouse.move(z['x']+z['width']/2,z['y']+z['height']/2,steps=12);p.mouse.up();d=snap(p)
- check('batches' in task(d,'model')['depends_on'],'dragging from a smaller child port creates a dependency')
- check(task(d,'model')['parent_id']=='analysis','drag-connect does not reparent the target')
- edge(p,'batches|model');p.locator('#connection-target').select_option('synthesis');p.locator('#connection-form button[type=submit]').click();d=snap(p)
- check('batches' in task(d,'synthesis')['depends_on'] and 'batches' not in task(d,'model')['depends_on'],'existing connection editor rewires edges between mixed-size cards')
- p.locator('#undo-button').click();p.locator('#undo-button').click();overview(p)
- go(p,'preparation');p.on('dialog',lambda d:d.accept());p.locator('[data-action=delete-task]').click();p.locator('#confirm-delete-step').click();d=snap(p)
- check(not any(t['id']=='preparation' for t in d['tasks']),'delete removes the selected parent')
- check(task(d,'metadata')['parent_id']=='analysis' and task(d,'batches')['parent_id']=='analysis','delete promotes direct children one level without deleting their work')
- check(task(d,'metadata')['notes']==task(base,'metadata')['notes'],'promoted child notes survive parent deletion')
- p.locator('#undo-button').click();check(snap(p)==base,'undo restores deleted parent and original hierarchy')
- overview(p);p.locator('#layout-freeform').click();p.locator('.task-node[data-id=preparation]').focus();p.keyboard.press('ArrowRight');d=snap(p)
- check(all(d['layout']['positions'][id]['x']==base['layout']['positions'][id]['x']+10 for id in ['preparation','metadata','batches']),'keyboard movement also moves the branch consistently')
- p.close()
- # Migration from a saved 0.6 project.
- legacy=json.loads((ROOT/'tests/fixtures/classic-project.json').read_text());legacy['tasks'][0]['substeps']=[{'id':'review','title':'Prior checklist item','notes':'An existing note','status':'done'}]
- h=re.sub(r'(<script id="initial-project" type="application/json">).*?(</script>)',lambda m:m[1]+json.dumps(legacy)+m[2],HTML,flags=re.S)
- p=opened(b,h);d=snap(p);converted=task(d,'question_review')
- check(len(d['tasks'])==9 and converted['parent_id']=='question','existing checklist entries are converted to visible child cards')
- check(converted['notes']=='An existing note' and converted['status']=='done','legacy conversion preserves notes and status')
- check(not any('substeps' in t for t in d['tasks']),'converted document no longer contains the obsolete checklist field')
- check(all(d['layout']['positions'][id]==pos for id,pos in legacy['layout']['positions'].items()),'conversion places children without moving original cards')
- p.close()
- # Responsive details and offline behavior.
- for width,height in [(1920,1080),(1440,900),(1280,800),(1024,768),(820,1000),(390,844),(320,640)]:
-  p=opened(b,width=width,height=height);requests=[];p.on('request',lambda r:requests.append(r.url))
-  check(p.evaluate('document.documentElement.scrollWidth<=innerWidth'),f'no horizontal document overflow at {width}px')
-  # Select using the graph’s keyboard affordance, which reveals/pans to offscreen cards.
-  go(p,'analysis');box=p.locator('#inspector').bounding_box()
-  check(box['x']>=0 and box['x']+box['width']<=width+1 and box['y']+box['height']<=height+1,f'details fit the viewport at {width}px')
-  p.locator('#parent-step').focus();check(p.locator('#parent-step').is_visible(),f'parent editing is reachable at {width}px')
-  if width in [390,1280]:p.screenshot(path=str(OUT/f'children-details-{width}.png'))
-  p.close()
- p=opened(b);network=[];p.on('request',lambda r:network.append(r.url));newchild(p,'analysis');check(not [url for url in network if url.startswith(('http:','https:'))],'adding children needs no external runtime, fonts or network requests');p.close()
- # Browser-to-real-server transport bridge, matching the baseline test setup.
- with TemporaryDirectory() as td:
-  path=Path(td)/'project.yaml';path.write_text((ROOT/'examples/research-project.yaml').read_text());store=ProjectStore(path);httpd=ThreadingHTTPServer(('127.0.0.1',0),make_handler(store));threading.Thread(target=httpd.serve_forever,daemon=True).start()
-  p=b.new_page(viewport={'width':1440,'height':900},accept_downloads=True,reduced_motion='reduce');p.set_default_timeout(10000);p.on('pageerror',lambda e:ERRORS.append(str(e)))
-  def bridge(url,options=None):
-   options=options or {};assert url.startswith('/api/');c=http.client.HTTPConnection('127.0.0.1',httpd.server_port);c.request(options.get('method') or 'GET',url,body=options.get('body'),headers=options.get('headers') or {});r=c.getresponse();d={'status':r.status,'text':r.read().decode()};c.close();return d
-  p.expose_function('__http',bridge)
-  js="""window.RESEARCH_FLOW_PREVIEW=false;window.fetch=async(url,o={})=>{const d=await window.__http(url,{method:o.method,headers:o.headers,body:o.body});return new Response(d.text,{status:d.status,headers:{'Content-Type':'application/json'}})};"""
-  p.set_content(HTML.replace('window.RESEARCH_FLOW_PREVIEW = true;',js));expect(p.locator('#save-state')).to_have_text('Saved')
-  cid,d=newchild(p,'preparation');go(p,cid);p.locator('[data-field=title]').fill('Child persisted on disk');p.locator('#save-button').click();expect(p.locator('#save-state')).to_have_text('Saved')
-  saved=parse_project(path.read_text());check(task(saved,cid)['parent_id']=='preparation' and task(saved,cid)['title']=='Child persisted on disk','local Save writes child cards and parent IDs to the real project file')
-  go(p,'analysis');p.locator('#step-number').fill('7');p.keyboard.press('Control+s');expect(p.locator('#save-state')).to_have_text('Saved')
-  check(task(parse_project(path.read_text()),'analysis')['step_number']==7,'Ctrl+S commits the active number field and saves it to YAML')
-  go(p,cid);p.locator('#parent-step').select_option('model');p.locator('#save-button').click();expect(p.locator('#save-state')).to_have_text('Saved');check(task(parse_project(path.read_text()),cid)['parent_id']=='model','local Save persists a parent change')
-  check(len([f for f in (Path(td)/'.research-flow').rglob('*.yaml') if f.is_file()])==3,'each actual save backs up the preceding on-disk version')
-  p.locator('[data-field=goal]').fill('Unsaved child draft');external=parse_project(path.read_text());external['project']['description']='Changed externally';path.write_text(json.dumps(external));expect(p.locator('#file-alert')).to_be_visible(timeout=10000)
-  check(p.locator('#save-button').is_disabled() and p.locator('[data-field=goal]').input_value()=='Unsaved child draft','external conflict still protects unsaved child edits')
-  p.close();httpd.shutdown();httpd.server_close()
- check(not ERRORS,'no uncaught JavaScript errors in children integration tests')
- b.close()
-(OUT/'children-checks.json').write_text(json.dumps({'count':len(CHECKS),'checks':CHECKS,'errors':ERRORS},indent=2))
-print('ALL',len(CHECKS),'CHILDREN CHECKS PASSED',flush=True)
+import json
+import os
+import re
+import shutil
+import sys
+import threading
+import time
+
+from playwright.sync_api import expect, sync_playwright
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
+from scripts.build_preview import build
+from server import parse_project, ProjectStore, make_handler
+
+OUT = ROOT / 'test-results'
+CHECKS, ERRORS = [], []
+LAST_EXPORT = 0.0
+
+
+def check(value, label):
+    if not value:
+        raise AssertionError(label)
+    CHECKS.append(label)
+    print('PASS', label, flush=True)
+
+
+def opened(browser, path, width=1600, height=1000):
+    page = browser.new_page(viewport={'width': width, 'height': height}, accept_downloads=True,
+                            reduced_motion='reduce')
+    page.set_default_timeout(7000)
+    page.on('pageerror', lambda error: ERRORS.append(str(error)))
+    page.goto(path.resolve().as_uri(), wait_until='load')
+    expect(page.locator('#save-button')).to_be_enabled()
+    return page
+
+
+def snap(page):
+    global LAST_EXPORT
+    page.wait_for_timeout(max(0, 1 - (time.monotonic() - LAST_EXPORT)) * 1000)
+    page.locator('#more-menu summary').click()
+    with page.expect_download() as download:
+        page.locator('#more-menu [data-action=export-json]').click()
+    LAST_EXPORT = time.monotonic()
+    return json.loads(Path(download.value.path()).read_text())
+
+
+def task(document, task_id):
+    return next(item for item in document['tasks'] if item['id'] == task_id)
+
+
+def close_details(page):
+    if page.locator('#inspector').is_visible():
+        page.locator('[data-action=close-inspector]').click()
+
+
+def overview(page):
+    close_details(page)
+    page.locator('#overview-button').click()
+
+
+def layers(page):
+    close_details(page)
+    page.locator('#layers-button').click()
+
+
+def go(page, task_id, layer=False):
+    node = page.locator(f'{".flow-node" if layer else ".task-node"}[data-id="{task_id}"]')
+    node.focus()
+    page.keyboard.press('Enter')
+    expect(page.locator('#inspector')).to_be_visible()
+    page.locator('#plan-tab').click()
+
+
+def history(page, redo=False):
+    page.locator('#layers-button').focus()
+    page.keyboard.press('Control+Shift+z' if redo else 'Control+z')
+
+
+def new_operation(page, owner):
+    overview(page)
+    go(page, owner)
+    page.locator('#inspector [data-action=add-child]').click()
+    expect(page.locator('#layers-view')).to_be_visible()
+    expect(page.locator('[data-field=title]')).to_be_focused()
+    document = snap(page)
+    return document['tasks'][-1]['id'], document
+
+
+def positions(page, layer=False):
+    return page.locator('.flow-node' if layer else '.task-node:visible').evaluate_all(
+        'nodes => Object.fromEntries(nodes.map(n => [n.dataset.id,{x:parseFloat(n.style.left),y:parseFloat(n.style.top)}]))')
+
+
+def drag_node(page, task_id, layer=False):
+    selector = '.flow-node' if layer else '.task-node'
+    box = page.locator(f'{selector}[data-id="{task_id}"]').bounding_box()
+    x, y = box['x'] + box['width'] * .4, box['y'] + box['height'] * .4
+    page.mouse.move(x, y)
+    page.mouse.down()
+    page.mouse.move(x + 45, y + 24, steps=10)
+    page.mouse.up()
+
+
+def saved_copy(page, directory, name):
+    with page.expect_download() as download:
+        page.locator('#save-button').click()
+    path = directory / name
+    path.write_text(Path(download.value.path()).read_text(), encoding='utf-8')
+    return path
+
+
+def fixture_preview(directory, name, document):
+    path = directory / f'{name}.json'
+    path.write_text(json.dumps(document), encoding='utf-8')
+    return build(path, directory / f'{name}.html')
+
+
+def run():
+    OUT.mkdir(exist_ok=True)
+    source = parse_project((ROOT / 'examples/research-project.yaml').read_text())
+    with TemporaryDirectory(prefix='research-flow-hierarchy-') as temporary:
+        directory = Path(temporary)
+        preview = build(ROOT / 'examples/research-project.yaml', directory / 'hierarchy.html')
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(
+                executable_path=os.environ.get('CHROMIUM_PATH') or shutil.which('chromium'),
+                headless=True, args=['--no-sandbox'])
+            page = opened(browser, preview)
+            base = snap(page)
+            check(set(positions(page)) == {'question', 'analysis', 'synthesis'}
+                  and page.locator('.stage-column h2').all_text_contents() == ['Step 1', 'Step 2', 'Step 3'],
+                  'legacy hierarchy opens with three numbered overview cards in Graph')
+            check(page.locator('.edge-hit[data-edge]').count() == 2,
+                  'Graph displays only explicit dependencies between overview steps')
+            check(page.locator('.substeps-section,.substep-row,.node-substeps,[data-action=add-substep]').count() == 0,
+                  'the obsolete checklist editor is absent')
+            check(not page.locator('#inspector').is_visible(), 'initial view remains a quiet canvas without details')
+            layers(page)
+            expect(page.locator('.flow-node')).to_have_count(8)
+            check(page.locator('.flow-node[data-layer=operation]').count() == 5,
+                  'legacy children and grandchildren remain accessible as five operations in Layers')
+            check(snap(page) == base, 'showing legacy detailed work does not rewrite hierarchy or positions')
+            page.screenshot(path=str(OUT / 'children-overview.png'))
+            overview(page)
+            page.locator('#add-button').click()
+            added = snap(page)
+            new = added['tasks'][-1]
+            check(len(added['tasks']) == 9 and new['title'] == 'Untitled step'
+                  and new['layer'] == 'overview' and not new.get('parent_id'),
+                  'Graph Add inserts an independent overview step')
+            history(page)
+            check(snap(page) == base, 'undo reverses overview insertion')
+            operation_id, document = new_operation(page, 'analysis')
+            operation = task(document, operation_id)
+            check(operation['layer'] == 'operation' and operation['overview_id'] == 'analysis'
+                  and operation['depends_on'] == [] and not operation.get('parent_id'),
+                  'Add operation assigns overview membership without inventing hierarchy or dependencies')
+            page.locator('[data-field=title]').fill('Confirm provenance')
+            page.locator('[data-field=goal]').fill('Validate source versions')
+            page.locator('[data-field=status]').select_option('in_progress')
+            page.locator('#resources-tab').click()
+            page.locator('[data-field=notes]').fill('Keep records\nSecond line')
+            page.locator('[data-field=inputs]').fill('data/source.tsv')
+            page.locator('[data-field=outputs]').fill('notes/provenance.md')
+            document = snap(page)
+            check(task(document, operation_id)['notes'] == 'Keep records\nSecond line'
+                  and task(document, operation_id)['inputs'] == ['data/source.tsv'],
+                  'new operations use the existing notes and file-reference editor')
+            page.locator('#plan-tab').click()
+            page.locator('#inspector [data-action=add-child]').click()
+            document = snap(page)
+            processing_id = document['tasks'][-1]['id']
+            check(task(document, processing_id)['layer'] == 'processing'
+                  and task(document, processing_id)['operation_id'] == operation_id
+                  and task(document, processing_id)['depends_on'] == [],
+                  'adding detailed work to an operation creates a processing node with explicit membership')
+            page.locator('[data-field=title]').fill('Record source checksum')
+            page.locator('[data-field=status]').select_option('done')
+            document = snap(page)
+            check(task(document, operation_id)['status'] == 'in_progress'
+                  and task(document, 'analysis')['status'] == 'in_progress',
+                  'completing processing work does not overwrite operation or overview progress')
+            copy = opened(browser, saved_copy(page, directory, 'saved-children.html'))
+            check(snap(copy) == document, 'Save copy preserves hierarchy, layer membership, statuses and detailed notes')
+            layers(copy)
+            check(copy.locator(f'.flow-node[data-id="{processing_id}"]').count() == 1,
+                  'saved copies render new processing work beneath its operation context')
+            copy.close()
+            page.close()
+
+            # Keep legacy parent editing, hierarchical numbering and the full list.
+            page = opened(browser, preview)
+            base = snap(page)
+            layers(page)
+            go(page, 'metadata', layer=True)
+            page.locator('#parent-step').select_option('model')
+            check(task(snap(page), 'metadata')['parent_id'] == 'model', 'Part of can reparent existing legacy work')
+            history(page)
+            check(snap(page) == base, 'undo restores the previous parent and all project data')
+            go(page, 'analysis', layer=True)
+            options = page.locator('#parent-step option').evaluate_all('options => options.map(o => o.value)')
+            check(not {'analysis', 'preparation', 'metadata', 'sensitivity'} & set(options),
+                  'parent choices exclude self and all descendants')
+            go(page, 'metadata', layer=True)
+            page.locator('#parent-step').select_option('')
+            promoted = snap(page)
+            overview(page)
+            check(not task(promoted, 'metadata').get('parent_id')
+                  and page.locator('.task-node[data-id=metadata]').count() == 1,
+                  'clearing an unrecorded legacy parent promotes that step into the overview Graph')
+            history(page)
+            layers(page)
+            go(page, 'metadata', layer=True)
+            page.locator('#add-dependency').select_option('question')
+            document = snap(page)
+            check(task(document, 'metadata')['depends_on'] == ['question']
+                  and task(document, 'metadata')['parent_id'] == 'preparation',
+                  'editing a child dependency does not alter its parent')
+            history(page)
+            overview(page)
+            page.locator('.task-node[data-id=analysis] h3').dblclick()
+            page.locator('.node-title-input').fill('Updated analysis')
+            page.locator('.node-title-input').press('Enter')
+            renamed = snap(page)
+            check(task(renamed, 'analysis')['title'] == 'Updated analysis' and renamed['layout'] == base['layout'],
+                  'inline overview rename preserves every stored position')
+            history(page)
+            check(snap(page) == base, 'one undo reverses the overview rename')
+            history(page, redo=True)
+            page.locator('.task-node[data-id=analysis] h3').dblclick()
+            page.locator('.node-title-input').fill('Cancelled name')
+            page.locator('.node-title-input').press('Escape')
+            check(snap(page) == renamed, 'Escape cancels inline renaming without changing data')
+            page.locator('#list-button').click()
+            check(page.locator('.table-task').evaluate_all('nodes => nodes.map(n => n.dataset.id)') ==
+                  ['question', 'analysis', 'preparation', 'metadata', 'batches', 'model', 'sensitivity', 'synthesis'],
+                  'Step list groups interleaved source tasks by their original hierarchy')
+            check(page.locator('.table-step').evaluate_all('nodes => nodes.map(n => parseFloat(getComputedStyle(n).paddingInlineStart))') ==
+                  [0, 0, 22, 44, 44, 22, 44, 0], 'list indentation preserves each hierarchy depth')
+            page.locator('.table-task[data-id=metadata]').click()
+            page.locator('[data-field=title]').fill('Check provenance')
+            page.locator('[data-field=title]').press('Tab')
+            renamed = snap(page)
+            check(page.locator('#list-view').is_visible() and task(renamed, 'metadata')['title'] == 'Check provenance',
+                  'detailed legacy work can be selected and renamed from Step list')
+            close_details(page)
+            page.screenshot(path=str(OUT / 'hierarchical-list.png'))
+            overview(page)
+            go(page, 'analysis')
+            page.locator('#step-number').fill('1')
+            page.locator('#step-number').press('Enter')
+            numbered = snap(page)
+            check(task(numbered, 'analysis')['step_number'] == 1 and task(numbered, 'question')['step_number'] == 2,
+                  'choosing an occupied overview number swaps main-step numbers')
+            page.locator('#list-button').click()
+            check(page.locator('.table-number').all_text_contents() == ['1', '1.1', '1.1.1', '1.1.2', '1.2', '1.2.1', '2', '3'],
+                  'renumbering updates all derived child numbers and list order')
+            overview(page)
+            check(list(positions(page)) == ['analysis', 'question', 'synthesis'] and numbered['layout'] == renamed['layout'],
+                  'Graph follows overview numbering while saved coordinates remain unchanged')
+            go(page, 'analysis')
+            page.locator('#step-number').fill('0')
+            page.locator('#step-number').press('Enter')
+            check(snap(page) == numbered, 'invalid step numbers leave project data unchanged')
+            history(page)
+            check(snap(page) == renamed, 'one undo restores both root numbers and descendant labels')
+            history(page, redo=True)
+            layers(page)
+            go(page, 'preparation', layer=True)
+            page.locator('[data-action=delete-task]').click()
+            page.locator('#delete-step-cancel').click()
+            check(snap(page) == numbered, 'canceling a child deletion preserves the workflow')
+            page.locator('[data-action=delete-task]').click()
+            page.locator('#confirm-delete-step').click()
+            deleted = snap(page)
+            check(not any(t['id'] == 'preparation' for t in deleted['tasks'])
+                  and task(deleted, 'metadata')['parent_id'] == 'analysis'
+                  and task(deleted, 'batches')['parent_id'] == 'analysis'
+                  and task(deleted, 'metadata')['notes'] == task(numbered, 'metadata')['notes'],
+                  'deleting a legacy parent promotes its direct children and preserves their work')
+            history(page)
+            check(snap(page) == numbered, 'undo restores deleted parents, descendant hierarchy and numbering')
+            page.close()
+
+            # Graph geometry is fixed; only Layers moves individual detailed cards.
+            page = opened(browser, preview)
+            base = snap(page)
+            graph_positions = positions(page)
+            drag_node(page, 'analysis')
+            page.locator('.task-node[data-id=analysis]').focus()
+            page.keyboard.press('ArrowRight')
+            page.locator('#arrange-button').click()
+            check(positions(page) == graph_positions and snap(page) == base
+                  and page.locator('#layout-freeform').count() == 0,
+                  'Graph dragging, arrow navigation and Arrange cannot edit saved positions')
+            layers(page)
+            page.locator('[data-action=layer-fit]').click()
+            initial = positions(page, layer=True)
+            drag_node(page, 'preparation', layer=True)
+            moved = snap(page)
+            changed = positions(page, layer=True)
+            check(changed['preparation'] != initial['preparation']
+                  and all(changed[key] == value for key, value in initial.items() if key != 'preparation'),
+                  'Layers moves only the chosen card while descendants and neighbors stay in place')
+            check(moved['tasks'] == base['tasks'] and moved['layout']['positions'] == base['layout']['positions'],
+                  'free card movement preserves hierarchy, statuses and legacy Graph coordinates')
+            history(page)
+            check(snap(page) == base, 'one undo reverses a Layers move including its initial position snapshot')
+            history(page, redo=True)
+            check(snap(page) == moved, 'redo restores the individual card position')
+            history(page)
+            page.locator('.flow-node[data-id=preparation]').focus()
+            page.keyboard.press('ArrowRight')
+            nudged = positions(page, layer=True)
+            check(nudged['preparation']['x'] == initial['preparation']['x'] + 10
+                  and nudged['metadata'] == initial['metadata'],
+                  'Layers keyboard nudging moves the chosen card without moving its legacy subtree')
+            history(page)
+            go(page, 'model', layer=True)
+            page.locator('#add-dependency').select_option('batches')
+            linked = snap(page)
+            check('batches' in task(linked, 'model')['depends_on']
+                  and task(linked, 'model')['parent_id'] == 'analysis',
+                  'detailed dependency editing preserves containment')
+            close_details(page)
+            edge = page.locator('.layer-dependency-hit[data-source=batches][data-target=model]')
+            edge.focus()
+            page.keyboard.press('Enter')
+            page.locator('#connection-target').select_option('synthesis')
+            page.locator('#connection-form button[type=submit]').click()
+            rewired = snap(page)
+            check('batches' in task(rewired, 'synthesis')['depends_on']
+                  and 'batches' not in task(rewired, 'model')['depends_on'],
+                  'the connection editor rewires a real lower-level dependency')
+            history(page)
+            history(page)
+            check(snap(page) == base, 'connection edits undo independently of hierarchy and card positions')
+            page.close()
+
+            # Explicit overview hierarchies retain Graph focus and collapse behavior.
+            nested = deepcopy(source)
+            for item in nested['tasks']:
+                if item['id'] in {'preparation', 'metadata'}:
+                    item['layer'] = 'overview'
+            task(nested, 'synthesis')['depends_on'].append('metadata')
+            page = opened(browser, fixture_preview(directory, 'nested-overviews', nested))
+            nested_base = snap(page)
+            page.locator('#canvas').dblclick(position={'x': 400, 'y': 120})
+            inserted = snap(page)
+            check(len(inserted['tasks']) == len(nested_base['tasks']) + 1
+                  and inserted['tasks'][-1]['layer'] == 'overview',
+                  'double-clicking empty Graph space adds exactly one overview step')
+            history(page)
+            check(snap(page) == nested_base, 'empty-canvas overview insertion remains undoable')
+            go(page, 'question')
+            close_details(page)
+            page.locator('.task-node[data-id=preparation] .node-delete').click()
+            expect(page.locator('#delete-step-dialog')).to_be_visible()
+            expect(page.locator('#delete-step-name')).to_contain_text('Prepare the dataset')
+            page.locator('#delete-step-cancel').click()
+            check(snap(page) == nested_base,
+                  'card deletion targets the clicked overview rather than another selected step and can be canceled')
+            page.locator('.task-node[data-id=preparation] .node-delete').click()
+            page.locator('#confirm-delete-step').click()
+            deleted = snap(page)
+            check(not any(item['id'] == 'preparation' for item in deleted['tasks'])
+                  and task(deleted, 'metadata')['parent_id'] == 'analysis'
+                  and task(deleted, 'question') == task(nested_base, 'question'),
+                  'card delete removes its target and promotes its children without deleting the selected overview')
+            history(page)
+            check(snap(page) == nested_base, 'undo restores card deletion including overview hierarchy')
+            go(page, 'preparation')
+            page.locator('#focus-button').click()
+            check(set(positions(page)) == {'analysis', 'preparation', 'metadata', 'synthesis'},
+                  'Graph Focus includes explicit overview descendants and their ancestor context')
+            check(snap(page) == nested_base, 'focusing an overview hierarchy changes presentation only')
+            overview(page)
+            page.locator('.task-node[data-id=analysis] .children-toggle').click()
+            expect(page.locator('.task-node:visible')).to_have_count(3)
+            check(page.locator('[data-bundle="analysis|synthesis"] text').text_content() == '2 hidden links',
+                  'collapsing overview children bundles only their actual dependencies')
+            page.locator('.bundle-label[data-bundle="analysis|synthesis"]').focus()
+            page.keyboard.press('Enter')
+            check(page.locator('.task-node[data-id=metadata]').is_visible()
+                  and page.locator('[data-edge="metadata|synthesis"]').count() == 1,
+                  'opening a bundle reveals its real overview endpoints')
+            check(snap(page) == nested_base, 'collapse and reveal never invent parent dependencies')
+            overview(page)
+            page.locator('.task-node[data-id=preparation] .children-toggle').click()
+            expect(page.locator('.task-node:visible')).to_have_count(4)
+            page.locator('.task-node[data-id=preparation] .children-toggle').click()
+            expect(page.locator('.task-node:visible')).to_have_count(5)
+            check(True, 'nested overview collapse hides only its own descendants')
+            page.screenshot(path=str(OUT / 'children-focus.png'))
+            page.close()
+
+            legacy = json.loads((ROOT / 'tests/fixtures/classic-project.json').read_text())
+            legacy['tasks'][0]['substeps'] = [{'id': 'review', 'title': 'Prior checklist item',
+                                             'notes': 'An existing note', 'status': 'done'}]
+            page = opened(browser, fixture_preview(directory, 'migrated-checklist', legacy))
+            migrated = snap(page)
+            converted = task(migrated, 'question_review')
+            check(converted['parent_id'] == 'question' and converted['notes'] == 'An existing note'
+                  and converted['status'] == 'done', 'legacy checklist migration preserves child ownership, notes and status')
+            check(not any('substeps' in item for item in migrated['tasks'])
+                  and all(migrated['layout']['positions'][key] == value for key, value in legacy['layout']['positions'].items()),
+                  'migration removes checklist fields without moving original cards')
+            go(page, 'question')
+            layers(page)
+            page.locator('.flow-node[data-id=question]').click()
+            check(page.locator('.flow-node[data-id=question_review]').count() == 1,
+                  'migrated checklist work is accessible as an operation in Layers')
+            page.close()
+
+            for width, height in [(1280, 800), (820, 1000), (390, 844), (320, 640)]:
+                page = opened(browser, preview, width=width, height=height)
+                check(page.evaluate('document.documentElement.scrollWidth <= innerWidth'),
+                      f'hierarchy views have no horizontal document overflow at {width}px')
+                go(page, 'analysis')
+                box = page.locator('#inspector').bounding_box()
+                check(box['x'] >= 0 and box['x'] + box['width'] <= width + 1
+                      and box['y'] + box['height'] <= height + 1,
+                      f'overview hierarchy details fit at {width}px')
+                expect(page.locator('#parent-step')).to_be_visible()
+                close_details(page)
+                page.locator('#list-button').click()
+                expect(page.locator('.table-task')).to_have_count(8)
+                check(page.locator('#list-view table').bounding_box()['y'] > page.locator('#list-button').bounding_box()['y'] + 31,
+                      f'hierarchical list rows start below the toolbar at {width}px')
+                if width == 390:
+                    page.screenshot(path=str(OUT / 'hierarchical-list-mobile.png'))
+                page.close()
+
+            # Real local Save and external-conflict handling for newly linked operations.
+            path = directory / 'project.yaml'
+            path.write_text((ROOT / 'examples/research-project.yaml').read_text())
+            httpd = ThreadingHTTPServer(('127.0.0.1', 0), make_handler(ProjectStore(path)))
+            server = threading.Thread(target=httpd.serve_forever, daemon=True)
+            server.start()
+            try:
+                page = browser.new_page(viewport={'width': 1440, 'height': 900}, accept_downloads=True,
+                                        reduced_motion='reduce')
+                page.set_default_timeout(10000)
+                page.on('pageerror', lambda error: ERRORS.append(str(error)))
+                page.goto(f'http://127.0.0.1:{httpd.server_port}/', wait_until='networkidle')
+                expect(page.locator('#save-state')).to_have_text('Saved')
+                operation_id, _ = new_operation(page, 'analysis')
+                page.locator('[data-field=title]').fill('Operation persisted on disk')
+                page.locator('#save-button').click()
+                expect(page.locator('#save-state')).to_have_text('Saved')
+                saved = parse_project(path.read_text())
+                check(task(saved, operation_id)['overview_id'] == 'analysis'
+                      and task(saved, operation_id)['title'] == 'Operation persisted on disk',
+                      'local Save persists newly added operation membership and title')
+                overview(page)
+                go(page, 'analysis')
+                page.locator('#step-number').fill('7')
+                page.keyboard.press('Control+s')
+                expect(page.locator('#save-state')).to_have_text('Saved')
+                check(task(parse_project(path.read_text()), 'analysis')['step_number'] == 7,
+                      'Ctrl+S commits the active step-number field to YAML')
+                layers(page)
+                go(page, operation_id, layer=True)
+                page.locator('[data-layer-field=overview_id]').select_option('synthesis')
+                page.locator('#save-button').click()
+                expect(page.locator('#save-state')).to_have_text('Saved')
+                check(task(parse_project(path.read_text()), operation_id)['overview_id'] == 'synthesis',
+                      'local Save persists an operation moving to another overview')
+                check(len([path for path in (directory / '.research-flow').rglob('*.yaml') if path.is_file()]) == 3,
+                      'each actual save backs up the preceding on-disk version')
+                page.locator('[data-field=goal]').fill('Unsaved operation draft')
+                external = parse_project(path.read_text())
+                external['project']['description'] = 'Changed externally'
+                path.write_text(json.dumps(external))
+                expect(page.locator('#file-alert')).to_be_visible(timeout=10000)
+                check(page.locator('#save-button').is_disabled()
+                      and page.locator('[data-field=goal]').input_value() == 'Unsaved operation draft',
+                      'external conflicts continue protecting unsaved detailed work')
+                page.close()
+            finally:
+                httpd.shutdown()
+                httpd.server_close()
+                server.join(timeout=5)
+            check(not ERRORS, 'hierarchy integration has no uncaught JavaScript errors')
+            browser.close()
+    (OUT / 'children-checks.json').write_text(json.dumps({'count': len(CHECKS), 'checks': CHECKS, 'errors': ERRORS}, indent=2))
+    print('ALL', len(CHECKS), 'CHILDREN CHECKS PASSED', flush=True)
+
+
+if __name__ == '__main__':
+    run()

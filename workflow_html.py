@@ -37,6 +37,8 @@ def render_workflow_html(document, *, read_only=True, layout_mode='stages', save
         template = template.replace(f'href="{path}"', f'href="data:image/svg+xml;base64,{data}"')
     model = re.sub(r'^export\s+', '', (WEB / 'model.mjs').read_text(encoding='utf-8'), flags=re.M)
     connection = re.sub(r'^export\s+', '', (WEB / 'connection.mjs').read_text(encoding='utf-8'), flags=re.M)
+    layers = re.sub(r'^import\s+.*?;\s*', '', (WEB / 'layers.mjs').read_text(encoding='utf-8'), flags=re.M | re.S)
+    layers = re.sub(r'^export\s+', '', layers, flags=re.M)
     app = re.sub(r'^import\s+.*?;\s*', '', (WEB / 'app.js').read_text(encoding='utf-8'), flags=re.M | re.S)
     css = (WEB / 'styles.css').read_text(encoding='utf-8')
     template = re.sub(r'<link\b[^>]*href="styles\.css"[^>]*>',
@@ -46,6 +48,6 @@ def render_workflow_html(document, *, read_only=True, layout_mode='stages', save
         settings += 'window.RESEARCH_FLOW_VIEWER = ' + _script_json({
             'saved_at': saved_at, 'layout_mode': layout_mode,
         }) + ';\n'
-    code = settings + model + '\n' + connection + '\n' + app
+    code = settings + model + '\n' + connection + '\n' + layers + '\n' + app
     return re.sub(r'<script\b[^>]*src="app\.js"[^>]*></script>',
                   lambda match: '<script type="module">\n' + code.replace('</script', '<\\/script') + '\n</script>', template)

@@ -2,9 +2,17 @@
 
 ## Unreleased
 
+- Add a Layers canvas for overview steps, operations and processing steps, with
+  independent free positioning, parent-centered arrangement and curved connections.
+  Keep Graph organized by numbered overview steps.
+- Track planned methods, parameters and rationale alongside recorded work,
+  inputs, outputs and data changes. Browse previous attempts without overwriting them.
+- Add a separate Ideas & questions panel with compact, expandable rows, linked
+  steps, notes, revisit conditions and outcomes.
 - Generate a self-contained, read-only HTML beside the YAML on each server Save.
-  Explore the full workflow offline with zoom, branch focus, layout switching and
-  task details; edit through the running app. The viewer shows when it was saved.
+  Explore the workflow offline with zoom, branch focus, Graph and Layers views,
+  methods, recorded work and ideas; edit through the running app. The viewer shows
+  when it was saved.
 - Keep SVG available through **More → Export SVG** in the running app. Existing
   SVG files remain untouched. Preview errors leave saved workflow data intact and
   offer a retry; unrelated HTML files are preserved.

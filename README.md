@@ -6,12 +6,17 @@ Research Flow is a visual planner for a single research project. Connect steps,
 organize them into branches, and keep your workflow in a readable YAML file on your
 own machine or Linux server.
 
-![Research Flow showing dependency stages, nested research steps, and the Stages / Freeform switch](docs/screenshot.png)
+![Research Flow workflow canvas](docs/screenshot.png)
+
+The screenshot shows an earlier interface. Graph now follows numbered steps;
+free card positioning lives in Layers.
 
 ## Features
 
-- **Dependency stages** — group steps automatically from left to right, with independent steps together; switch to freeform to use your saved arrangement.
-- **Canvas editing** — arrange, connect, rename, and delete steps directly on the canvas.
+- **Three connected layers** — connect overview decisions, research operations and individual processing steps. Track literature, downloads, code, analysis and writing with records of inputs, parameters, outputs and rationale. See the [three-layer guide](docs/three-layers.md).
+- **Ideas & questions** — capture possibilities and decisions to revisit, optionally link them to a step, and preserve their outcomes when resolved.
+- **Organized overview** — Graph keeps high-level steps in numbered order; use Layers for freely arranged cards and their detailed work.
+- **Canvas editing** — connect, rename and delete steps, and freely position cards in Layers.
 - **Nested branches** — organize numbered steps and children, with an indented list view.
 - **Focus and overview** — zoom into a branch or navigate the whole project with the minimap.
 - **Details in one place** — track each step's status, goals, notes, inputs, and outputs.
@@ -40,10 +45,11 @@ Open the private URL printed in the terminal. Keep the app running and click
 
 Saving `workflow.yaml` also creates or updates `workflow.html` in the same folder
 on the machine running Research Flow. Open that file in a browser to zoom, pan,
-expand branches, switch Stages / Freeform layouts, and read task details without
-running the app. The viewer includes all branches, starts in the saved layout mode,
-and embeds its data and assets for offline use. It shows the last saved snapshot;
-reload an open viewer after saving again. Opening a workflow does not write a preview.
+explore Graph, Layers and Step list, and read task details, recorded methods and
+ideas without running the app. Graph stays in numbered overview-step order;
+Layers retains its saved card positions. The viewer embeds its data and assets
+for offline use. It shows the last saved snapshot; reload an open viewer after
+saving again. Opening a workflow does not write a preview.
 
 To edit, run `research-flow` and open its private URL. The saved HTML stays read-only,
 even while the app is running. Use **More → Export SVG** in the running app when you

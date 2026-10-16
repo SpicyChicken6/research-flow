@@ -75,7 +75,7 @@ def run(executable):
                     status, data = response.status, response.read()
                     conn.close()
                     return status, data
-                for asset in ('/', '/app.js', '/model.mjs', '/connection.mjs', '/styles.css',
+                for asset in ('/', '/app.js', '/model.mjs', '/connection.mjs', '/layers.mjs', '/styles.css',
                               '/assets/research-flow-icon-light.svg', '/assets/research-flow-icon-dark.svg'):
                     status, data = request('GET', asset)
                     assert status == 200 and data, asset
@@ -92,6 +92,19 @@ def run(executable):
                     assert project.read_bytes() == original, 'Opening an existing workflow must not rewrite it'
                     assert snapshot['document']['custom'] == 'preserved'
                 snapshot['document']['project']['name'] = 'Installed app saved this'
+                snapshot['document']['project']['presentation'] = 'layers'
+                snapshot['document']['tasks'] = [
+                    {'id': 'overview', 'title': 'Research question'},
+                    {'id': 'operation', 'title': 'Review evidence', 'layer': 'operation', 'overview_id': 'overview'},
+                    {'id': 'processing', 'title': 'Record findings', 'layer': 'processing', 'operation_id': 'operation',
+                     'records': [{'id': 'attempt', 'recorded_at': '2026-10-16T20:15:00Z',
+                                  'status': 'recorded', 'method': 'Document reviewed evidence'}]},
+                ]
+                snapshot['document']['ideas'] = [
+                    {'id': 'question', 'title': 'Revisit this result', 'kind': 'question',
+                     'status': 'open', 'created_at': '2026-10-16T20:15:00Z', 'related_task_id': 'processing'},
+                ]
+                snapshot['document']['layout']['layer_positions'] = {'processing': {'x': -80, 'y': 120}}
                 status, data = request('PUT', '/api/project', snapshot)
                 assert status == 200
                 result = json.loads(data)
@@ -102,8 +115,12 @@ def run(executable):
                 html = preview.read_text()
                 assert '<!doctype html>' in html.lower()
                 embedded = re.search(r'<script id="initial-project" type="application/json">(.*?)</script>', html, re.S)
-                assert embedded and json.loads(embedded[1]) == snapshot['document']
+                assert embedded and json.loads(embedded[1]) == result['document']
                 assert 'window.RESEARCH_FLOW_VIEWER' in html
+                for entry_point in ('computeLayerCanvas', 'renderLayeredView', 'renderMethodDetails',
+                                    'renderIdeasList', 'overviewConnector'):
+                    assert f'function {entry_point}(' in html, entry_point
+                assert not re.search(r'(?m)^(?:import|export)\s', html)
                 assert not re.search(r'<script\b[^>]*\bsrc=', html)
                 assert 'href="styles.css"' not in html
                 assert 'href="assets/' not in html
