@@ -260,6 +260,34 @@ class PrivateHTTPTests(unittest.TestCase):
         self.assertEqual(self.path.read_bytes(), before)
     def test_validation_requires_token(self):
         self.assertEqual(self.request('/api/validate', method='POST', data={'yaml':'x'})[0], 401)
+    def test_svg_export_requires_token_and_same_origin_json(self):
+        payload = {'document': self.store.read()['document'], 'layout_mode': 'stages'}
+        self.assertEqual(self.request('/api/export/svg', method='POST', data=payload)[0], 401)
+        for headers in ({'Origin':'https://evil.example'}, {'Host':'evil.example'},
+                        {'X-Research-Flow':'0'}, {'Content-Type':'text/plain'}):
+            with self.subTest(headers=headers):
+                self.assertEqual(self.request('/api/export/svg', method='POST', token=self.token,
+                                              headers=headers, data=payload)[0], 403)
+    def test_svg_export_uses_draft_without_saving_or_exposing_credentials(self):
+        before = {path.relative_to(self.path.parent): path.read_bytes()
+                  for path in self.path.parent.rglob('*') if path.is_file()}
+        draft = self.store.read()['document']
+        draft['project']['name'] = 'An unsaved export'
+        status, _, body = self.request('/api/export/svg', method='POST', token=self.token,
+                                      data={'document':draft, 'layout_mode':'freeform'})
+        self.assertEqual(status, 200)
+        svg = json.loads(body)['svg']
+        self.assertIn('<svg', svg)
+        self.assertIn('An unsaved export', svg)
+        self.assertNotIn(self.token, svg)
+        self.assertNotIn(str(self.path), svg)
+        self.assertEqual({path.relative_to(self.path.parent): path.read_bytes()
+                          for path in self.path.parent.rglob('*') if path.is_file()}, before)
+    def test_svg_export_rejects_invalid_document_or_layout(self):
+        for payload in ({'document':{}}, {'document':self.store.read()['document'], 'layout_mode':[]}):
+            with self.subTest(payload=payload):
+                self.assertEqual(self.request('/api/export/svg', method='POST', token=self.token,
+                                              data=payload)[0], 400)
     def test_token_does_not_bypass_origin_checks(self):
         self.assertEqual(self.request(token=self.token, headers={'Origin':'https://evil.example'})[0], 403)
     def test_token_does_not_bypass_host_checks(self):
@@ -281,6 +309,9 @@ class PrivateHTTPTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(parse_project(self.path.read_text())['project']['name'], 'Private fixture')
         self.assertNotIn(self.token.encode(), body)
+        preview = self.path.with_suffix('.html').read_text()
+        self.assertNotIn(self.token, preview)
+        self.assertNotIn(str(self.path), preview)
         self.assertTrue(list((self.path.parent/'.research-flow/backups/project.yaml').glob('*.yaml')))
         self.assertEqual(self.request(method='PUT', token=self.token,
                          data={'document':doc,'revision':start['revision']})[0], 409)

@@ -5,6 +5,8 @@
 /workflow.yaml
 /workflow.yml
 # Generated previews beside workflows in the source root or examples.
+/*.html
+/examples/*.html
 /*.svg
 /examples/*.svg
 /data/

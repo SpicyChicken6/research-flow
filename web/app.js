@@ -112,12 +112,14 @@ const esc = (value = '') => String(value).replace(/[&<>"']/g, c => ({'&':'&amp;'
 const icon = name => `<svg class="icon" viewBox="0 0 24 24" aria-hidden="true">${paths[name] || paths.graph}</svg>`;
 const statusOptions = status => Object.entries(STATUS).map(([key, value]) => `<option value="${key}" ${key === status ? 'selected' : ''}>${value.label}</option>`).join('');
 // Keep a pristine copy, not a serialization of the currently rendered controls.
-const portable = location.protocol === 'file:' || window.RESEARCH_FLOW_PREVIEW;
+const viewer = window.RESEARCH_FLOW_VIEWER;
+const readOnly = !!viewer;
+const portable = readOnly || location.protocol === 'file:' || window.RESEARCH_FLOW_PREVIEW;
 const portableTemplate = portable ? '<!doctype html>\n' + document.documentElement.outerHTML : null;
 let project = ensurePositions(validateProject(JSON.parse($('#initial-project').textContent)));
 let baseline = JSON.stringify(project), revision = null, mode = 'loading', filePath = 'project.yaml';
 let selected = null, selectedEdge = null, inspectorTab = 'plan', focusMode = false, view = 'graph';
-let layoutMode = 'stages', stageCache = null, stageProject = null;
+let layoutMode = readOnly && viewer.layout_mode === 'freeform' ? 'freeform' : 'stages', stageCache = null, stageProject = null;
 let pointer = null, connectFrom = null, mapOpen = true;
 let pendingDeletion = null;
 let lastNodeClick = null;
@@ -141,6 +143,7 @@ function stagedLayout() {
 const positionOf = id => (layoutMode === 'stages' ? stagedLayout().positions : project.layout.positions)[id] || {x:0, y:0};
 // Only a deliberate move copies the staged positions into the saved freeform layout.
 function startFreeformMove(doc) {
+  if (readOnly) return doc;
   if (layoutMode === 'stages') {
     for (const [id, position] of Object.entries(stagedLayout().positions)) {
       doc.layout.positions[id] = {...doc.layout.positions[id], ...position};
@@ -172,6 +175,7 @@ function toast(message, error = false) {
   $('#toasts').append(el); setTimeout(() => el.remove(), error ? 6500 : 3200);
 }
 function remember(before, group = '', beforeLayout = layoutMode) {
+  if (readOnly) return;
   if (!group || group !== lastGroup || Date.now() - groupTime > 900) {
     history.push({document:before, layoutMode:beforeLayout===layoutMode?null:beforeLayout});
     if (history.length > 70) history.shift();
@@ -179,6 +183,7 @@ function remember(before, group = '', beforeLayout = layoutMode) {
   lastGroup = group; groupTime = Date.now(); future = [];
 }
 function change(fn, {group='', inspector=true, validate=false, graph=true} = {}) {
+  if (readOnly) return false;
   const before = clone(project), next = clone(project), beforeLayout = layoutMode;
   try {
     const result = fn(next) || next;
@@ -188,6 +193,7 @@ function change(fn, {group='', inspector=true, validate=false, graph=true} = {})
   } catch(error) { layoutMode = beforeLayout; toast(error.message, true); return false; }
 }
 function restoreHistory(from,to) {
+  if (readOnly) return;
   if(!from.length)return;
   const entry=from.pop();
   to.push({document:clone(project),layoutMode:entry.layoutMode===null?null:layoutMode});
@@ -235,6 +241,7 @@ function toggleBranch(id) {
   refresh();
 }
 function reparent(id,parent) {
+  if (readOnly) return;
   try {
     const next=setParent(project,id,parent);
     revealPath(parent); if(parent)collapsedBranches.delete(parent);
@@ -277,13 +284,16 @@ function renderHeader() {
   if (document.activeElement !== $('#project-title')) $('#project-title').value=project.project.name || '';
   document.title = `${project.project.name || 'Untitled project'} · Research Flow`;
   const label = busy ? 'Saving…' : mode === 'loading' ? 'Connecting…' : mode === 'error' ? 'File unavailable' : conflict ? 'File changed' : dirty() ? 'Unsaved changes' : mode === 'server' ? (previewWarning ? 'Saved · preview unavailable' : 'Saved') : copyDownloaded ? 'Copy downloaded' : 'In this tab';
-  $('#save-state').innerHTML = `${dirty() ? '<span class="save-dot dirty"></span>' : ''}${label}`;
-  $('#save-state').title = mode === 'server' ? (previewWarning || filePath) : 'Preview changes live in this tab. Save copy downloads a reopenable HTML with your edits.';
+  const savedAt = readOnly && viewer.saved_at ? new Date(viewer.saved_at) : null;
+  const savedLabel = savedAt && !Number.isNaN(savedAt.getTime()) ? savedAt.toLocaleString(undefined, {dateStyle:'medium',timeStyle:'short'}) : 'time unavailable';
+  $('#save-state').innerHTML = readOnly ? `<span class="viewer-label">Read-only</span><span class="viewer-saved">Last saved <time datetime="${esc(viewer.saved_at || '')}">${esc(savedLabel)}</time></span>` : `${dirty() ? '<span class="save-dot dirty"></span>' : ''}${label}`;
+  $('#save-state').title = readOnly ? 'Saved snapshot. Run Research Flow to edit the workflow. Refresh this page after saving a newer snapshot.' : mode === 'server' ? (previewWarning || filePath) : 'Preview changes live in this tab. Save copy downloads a reopenable HTML with your edits.';
   $('#save-button').textContent = busy ? 'Saving…' : mode === 'server' ? 'Save' : 'Save copy';
-  $('#save-button').title = mode === 'server' ? (previewWarning ? 'Retry saving the SVG preview · ⌘/Ctrl S' : 'Save workflow and SVG preview · ⌘/Ctrl S') : 'Download an editable HTML copy of this project · ⌘/Ctrl S';
-  $('#save-button').disabled = busy || ['loading','error'].includes(mode) || (mode === 'server' && (conflict || (!dirty() && !previewWarning)));
-  $('#add-button').disabled = ['loading','error'].includes(mode) || project.tasks.length>=500;
-  $('#undo-button').disabled = !history.length; $('#redo-button').disabled = !future.length;
+  $('#save-button').title = mode === 'server' ? (previewWarning ? 'Retry saving the HTML preview · ⌘/Ctrl S' : 'Save workflow and interactive HTML preview · ⌘/Ctrl S') : 'Download an editable HTML copy of this project · ⌘/Ctrl S';
+  $('#save-button').disabled = readOnly || busy || ['loading','error'].includes(mode) || (mode === 'server' && (conflict || (!dirty() && !previewWarning)));
+  $('#add-button').disabled = readOnly || ['loading','error'].includes(mode) || project.tasks.length>=500;
+  $('#undo-button').disabled = readOnly || !history.length; $('#redo-button').disabled = readOnly || !future.length;
+  $('#export-svg-option').hidden = readOnly || mode !== 'server';
   $('#focus-button').hidden = !currentTask() || view !== 'graph';
   $('#focus-button').classList.toggle('focus-active', focusMode);
   $('#focus-button').setAttribute('aria-pressed', String(focusMode));
@@ -294,7 +304,7 @@ function renderHeader() {
   $('#details-button').setAttribute('aria-expanded', String(!$('#inspector').hidden));
   $('#list-button').classList.toggle('active', view === 'list');
   $('#list-button').setAttribute('aria-pressed', String(view === 'list'));
-  $('#arrange-button').hidden = view !== 'graph';
+  $('#arrange-button').hidden = readOnly || view !== 'graph';
   $('#layout-control').hidden = view !== 'graph';
   $$('#layout-control [data-layout]').forEach(button=>{
     const active=button.dataset.layout===layoutMode;
@@ -377,13 +387,13 @@ function renderGraph() {
     const p=positionOf(t.id),size=taskSize(t),active=selected===t.id&&!selectedEdge,children=childrenOf(project,t.id),collapsed=collapsedBranches.has(t.id)||children.some(c=>!shown.has(c.id));
     const childLabel=children.length===1?'1 child':`${children.length} children`;
     return `<article class="task-node ${t.parent_id?'child-node':''} ${active?'selected':related.has(t.id)?'related':''}" ${shown.has(t.id)?'':'hidden'} data-id="${esc(t.id)}" data-status="${esc(t.status)}" style="left:${p.x}px;top:${p.y}px;width:${size.width}px;height:${size.height}px" tabindex="0" aria-label="${esc(t.title)}, ${STATUS[t.status].label}${t.parent_id?', child step':''}" aria-roledescription="workflow step">
-    <button class="port in" data-port="in" data-id="${esc(t.id)}" aria-label="Input for ${esc(t.title)}" title="Add an incoming dependency"></button>
+    ${readOnly?'':`<button class="port in" data-port="in" data-id="${esc(t.id)}" aria-label="Input for ${esc(t.title)}" title="Add an incoming dependency"></button>`}
     <div class="task-node-header"><span class="status-pill"><span class="status-dot ${esc(t.status)}"></span>${STATUS[t.status].label}</span></div>
-    <h3 title="Double-click to rename" class="${t.title==='Untitled step'?'untitled':''}">${esc(t.title||'Untitled step')}</h3>
-    <div class="node-meta"><p class="node-goal ${!t.goal?'placeholder':''}">${esc(t.goal || (t.title==='Untitled step'?'Click to name this step':''))}</p></div>
+    <h3 title="${readOnly?'Click to view details':'Double-click to rename'}" class="${t.title==='Untitled step'?'untitled':''}">${esc(t.title||'Untitled step')}</h3>
+    <div class="node-meta"><p class="node-goal ${!t.goal?'placeholder':''}">${esc(t.goal || (!readOnly&&t.title==='Untitled step'?'Click to name this step':''))}</p></div>
     ${t.outputs.length?`<div class="node-output" title="${esc(`Outputs: ${t.outputs.join(', ')}`)}">${icon('file')}<span>${esc(t.outputs[0])}</span>${t.outputs.length>1?`<span class="output-more">+${t.outputs.length-1}</span>`:''}</div>`:''}
-    <div class="node-hierarchy-controls">${children.length?`<button class="children-toggle ${collapsed?'is-collapsed':''}" data-node-action data-action="toggle-children" data-id="${esc(t.id)}" aria-expanded="${!collapsed}" aria-label="${collapsed?'Show':'Hide'} children of ${esc(t.title)}" title="${collapsed?'Show':'Hide'} ${descendantIds(project,t.id).size} descendant steps">${icon('chevron')}<span>${childLabel}</span></button>`:''}<button class="node-delete" data-node-action data-action="delete-card" data-id="${esc(t.id)}" aria-label="Delete step ${esc(t.title)}" title="Delete step">${icon('trash')}</button><button class="node-add-child" data-node-action data-action="add-child" data-id="${esc(t.id)}" aria-label="Add child step to ${esc(t.title)}" title="Add child step">${icon('plus')}</button></div>
-    <button class="port out" data-port="out" data-id="${esc(t.id)}" aria-label="Output for ${esc(t.title)}" title="Drag to connect. An ungrouped step linked to a child joins its branch."></button></article>`;
+    <div class="node-hierarchy-controls">${children.length?`<button class="children-toggle ${collapsed?'is-collapsed':''}" data-node-action data-action="toggle-children" data-id="${esc(t.id)}" aria-expanded="${!collapsed}" aria-label="${collapsed?'Show':'Hide'} children of ${esc(t.title)}" title="${collapsed?'Show':'Hide'} ${descendantIds(project,t.id).size} descendant steps">${icon('chevron')}<span>${childLabel}</span></button>`:''}${readOnly?'':`<button class="node-delete" data-node-action data-action="delete-card" data-id="${esc(t.id)}" aria-label="Delete step ${esc(t.title)}" title="Delete step">${icon('trash')}</button><button class="node-add-child" data-node-action data-action="add-child" data-id="${esc(t.id)}" aria-label="Add child step to ${esc(t.title)}" title="Add child step">${icon('plus')}</button>`}</div>
+    ${readOnly?'':`<button class="port out" data-port="out" data-id="${esc(t.id)}" aria-label="Output for ${esc(t.title)}" title="Drag to connect. An ungrouped step linked to a child joins its branch."></button>`}</article>`;
   }).join('');
   renderEdges();applyTransform();updateConnectPrompt();$('#empty-state').hidden=project.tasks.length>0;
 }
@@ -490,20 +500,26 @@ function zoom(factor, x=$('#canvas').clientWidth/2, y=$('#canvas').clientHeight/
 }
 function pointInWorld(x,y) { const r=$('#canvas').getBoundingClientRect(); return {x:(x-r.left-transform.x)/transform.zoom,y:(y-r.top-transform.y)/transform.zoom}; }
 function dependencyRow(t, source, target) {
-  return `<div class="dependency-row"><span class="status-dot ${t.status}"></span><button class="dependency-name" data-action="select" data-id="${esc(t.id)}" title="Edit ${esc(t.title)}">${esc(t.title)}</button><button class="icon-button" data-action="remove-dependency" data-source="${esc(source)}" data-target="${esc(target)}" title="Remove connection" aria-label="Remove connection ${esc(source)} to ${esc(target)}">${icon('close')}</button></div>`;
+  return `<div class="dependency-row"><span class="status-dot ${t.status}"></span><button class="dependency-name" data-action="select" data-id="${esc(t.id)}" title="${readOnly?'View':'Edit'} ${esc(t.title)}">${esc(t.title)}</button>${readOnly?'':`<button class="icon-button" data-action="remove-dependency" data-source="${esc(source)}" data-target="${esc(target)}" title="Remove connection" aria-label="Remove connection ${esc(source)} to ${esc(target)}">${icon('close')}</button>`}</div>`;
 }
 function renderFamily(task) {
   const descendants=descendantIds(project,task.id),kids=childrenOf(project,task.id);
   const choices=project.tasks.filter(t=>t.id!==task.id&&!descendants.has(t.id));
   const parent=project.tasks.find(t=>t.id===task.parent_id);
-  return `<section class="inspector-section family-section"><div class="family-heading"><h3>Hierarchy</h3><button class="text-button" data-action="add-child" data-id="${esc(task.id)}">${icon('plus')} Add child</button></div>
-  ${!parent?`<label class="field-label">Step number<input id="step-number" type="number" min="1" step="1" value="${stepOutline(project).find(row=>row.task.id===task.id).number}"></label><p class="field-help">Children inherit this number. An existing main-step number swaps with this one.</p>`:''}
-  <label class="field-label">Part of<select id="parent-step" aria-label="Parent step"><option value="">No parent · main step</option>${choices.map(t=>`<option value="${esc(t.id)}" ${t.id===task.parent_id?'selected':''}>${esc(t.title)}</option>`).join('')}</select></label>
+  return `<section class="inspector-section family-section"><div class="family-heading"><h3>Hierarchy</h3>${readOnly?'':`<button class="text-button" data-action="add-child" data-id="${esc(task.id)}">${icon('plus')} Add child</button>`}</div>
+  ${readOnly?viewerField('Step number',stepOutline(project).find(row=>row.task.id===task.id).number,'number'):!parent?`<label class="field-label">Step number<input id="step-number" type="number" min="1" step="1" value="${stepOutline(project).find(row=>row.task.id===task.id).number}"></label><p class="field-help">Children inherit this number. An existing main-step number swaps with this one.</p>`:''}
+  ${readOnly?viewerField('Part of',parent?.title || 'No parent · main step','parent_id'):`<label class="field-label">Part of<select id="parent-step" aria-label="Parent step"><option value="">No parent · main step</option>${choices.map(t=>`<option value="${esc(t.id)}" ${t.id===task.parent_id?'selected':''}>${esc(t.title)}</option>`).join('')}</select></label>`}
   ${parent?`<button class="family-parent" data-action="select" data-id="${esc(parent.id)}">${icon('up')} Open ${esc(parent.title)}</button>`:''}
   ${kids.length?`<div class="family-heading"><span class="connection-group-label">Children</span><button class="text-button" data-action="toggle-children" data-id="${esc(task.id)}">${collapsedBranches.has(task.id)||kids.some(c=>!visibleTasks().some(v=>v.id===c.id))?'Show on canvas':'Collapse branch'}</button></div>${kids.map(t=>`<div class="dependency-row"><span class="status-dot ${esc(t.status)}"></span><button class="dependency-name" data-action="select" data-id="${esc(t.id)}">${esc(t.title)}</button><button class="icon-button" data-action="select" data-id="${esc(t.id)}" aria-label="Open child ${esc(t.title)}">${icon('next')}</button></div>`).join('')}`:''}
   </section>`;
 }
 
+function viewerField(label, value, field) {
+  return `<div class="field-label">${esc(label)}<div class="viewer-value" data-view-field="${esc(field)}">${esc(value) || '<span class="viewer-empty">None recorded</span>'}</div></div>`;
+}
+function inspectorTabs() {
+  return `<div class="inspector-tabs" role="tablist" aria-label="Step information"><button role="tab" id="plan-tab" data-action="inspector-tab" data-tab="plan" aria-selected="${inspectorTab==='plan'}" aria-controls="plan-panel" tabindex="${inspectorTab==='plan'?0:-1}" class="${inspectorTab==='plan'?'active':''}">Plan</button><button role="tab" id="resources-tab" data-action="inspector-tab" data-tab="resources" aria-selected="${inspectorTab==='resources'}" aria-controls="resources-panel" tabindex="${inspectorTab==='resources'?0:-1}" class="${inspectorTab==='resources'?'active':''}">Notes & files</button></div>`;
+}
 function renderInspector() {
   const task=currentTask(), container=$('#inspector'), key=selectedEdge || selected;
   const scroll=inspectorSelection===key ? $('#inspector .inspector-content')?.scrollTop || 0 : 0;
@@ -511,15 +527,27 @@ function renderInspector() {
   const heading=label=>`<div class="inspector-heading"><span class="inspector-heading-label">${label}</span><button class="icon-button" data-action="close-inspector" aria-label="Close details" title="Close details">${icon('close')}</button></div>`;
   if (selectedEdge) {
     const [source,target]=selectedEdge.split('|');
+    if (readOnly) {
+      container.innerHTML=`${heading('Connection')}<div class="inspector-content"><div class="connection-direction">${icon('link')} Dependency</div><p class="connection-summary">The step under <strong>To</strong> depends on the step under <strong>From</strong>.</p><div class="connection-group-label">From</div>${dependencyRow(project.tasks.find(t=>t.id===source),source,target)}<div class="connection-group-label">To</div>${dependencyRow(project.tasks.find(t=>t.id===target),source,target)}</div>`;
+      return;
+    }
     const choices=id=>project.tasks.map(t=>`<option value="${esc(t.id)}" ${t.id===id ? 'selected' : ''}>${esc(t.title)}</option>`).join('');
     container.innerHTML=`${heading('Connection')}<div class="inspector-content"><div class="connection-direction">${icon('link')} Dependency</div><p class="connection-summary">The step under <strong>To</strong> depends on the step under <strong>From</strong>.</p><form id="connection-form"><label class="field-label">From<select id="connection-source">${choices(source)}</select></label><label class="field-label">To<select id="connection-target">${choices(target)}</select></label><p id="connection-error" class="inline-error" role="alert"></p><div class="connection-actions"><button class="button primary" type="submit">Update connection</button><button class="button" data-action="reverse-edge" type="button">Reverse</button></div></form></div><div class="inspector-footer"><button class="delete-task" data-action="delete-edge">${icon('trash')} Remove connection</button></div>`;
     return;
   }
   if (!task) { container.innerHTML=''; container.hidden=true; return; }
-  const candidates=project.tasks.filter(t=>t.id!==task.id && !task.depends_on.includes(t.id)).filter(t=>{ try{addDependency(project,t.id,task.id);return true;}catch{return false;} });
   const downstream=project.tasks.filter(t=>t.depends_on.includes(task.id));
+  if (readOnly) {
+    container.innerHTML=`${heading('Step details')}<div class="inspector-content"><div class="id-line">${task.parent_id?'CHILD STEP':'MAIN STEP'}</div><h2 class="viewer-title" data-view-field="title">${esc(task.title)}</h2>${inspectorTabs()}
+    <div id="plan-panel" role="tabpanel" aria-labelledby="plan-tab" ${inspectorTab!=='plan'?'hidden':''}>${viewerField('Status',STATUS[task.status].label,'status')}${viewerField('Goal',task.goal,'goal')}${renderFamily(task)}
+    <section class="inspector-section"><h3>Dependencies</h3><div class="connection-group-label">Depends on</div>${task.depends_on.map(id=>dependencyRow(project.tasks.find(t=>t.id===id),id,task.id)).join('') || '<p class="no-connections">No incoming connections</p>'}${downstream.length?`<div class="connection-group-label">Required by</div>${downstream.map(t=>dependencyRow(t,task.id,t.id)).join('')}`:''}</section></div>
+    <div id="resources-panel" role="tabpanel" aria-labelledby="resources-tab" ${inspectorTab!=='resources'?'hidden':''}>${viewerField('Notes',task.notes,'notes')}${viewerField('Inputs',task.inputs.join('\n'),'inputs')}${viewerField('Outputs',task.outputs.join('\n'),'outputs')}${task.agent_instructions?`<details><summary>Existing handoff notes</summary>${viewerField('Agent instructions',task.agent_instructions,'agent_instructions')}</details>`:''}</div></div>`;
+    $('#inspector .inspector-content').scrollTop=scroll;
+    return;
+  }
+  const candidates=project.tasks.filter(t=>t.id!==task.id && !task.depends_on.includes(t.id)).filter(t=>{ try{addDependency(project,t.id,task.id);return true;}catch{return false;} });
   container.innerHTML=`${heading('Step details')}<div class="inspector-content"><div class="id-line">${task.parent_id?'CHILD STEP':'MAIN STEP'}</div><textarea class="title-input" rows="2" data-field="title" aria-label="Step title" placeholder="Name this step…" maxlength="200">${task.title==='Untitled step'?'':esc(task.title)}</textarea>
-    <div class="inspector-tabs" role="tablist" aria-label="Step information"><button role="tab" id="plan-tab" data-action="inspector-tab" data-tab="plan" aria-selected="${inspectorTab==='plan'}" aria-controls="plan-panel" tabindex="${inspectorTab==='plan'?0:-1}" class="${inspectorTab==='plan'?'active':''}">Plan</button><button role="tab" id="resources-tab" data-action="inspector-tab" data-tab="resources" aria-selected="${inspectorTab==='resources'}" aria-controls="resources-panel" tabindex="${inspectorTab==='resources'?0:-1}" class="${inspectorTab==='resources'?'active':''}">Notes & files</button></div>
+    ${inspectorTabs()}
     <div id="plan-panel" role="tabpanel" aria-labelledby="plan-tab" ${inspectorTab!=='plan'?'hidden':''}><label class="field-label">Status<select data-field="status">${statusOptions(task.status)}</select></label><label class="field-label">Goal<textarea rows="3" data-field="goal" placeholder="What should this step achieve?">${esc(task.goal)}</textarea></label>
     ${renderFamily(task)}
     <section class="inspector-section"><h3>Dependencies</h3><div class="connection-group-label">Depends on</div>${task.depends_on.map(id=>dependencyRow(project.tasks.find(t=>t.id===id),id,task.id)).join('') || '<p class="no-connections">No incoming connections</p>'}<select class="dependency-add" id="add-dependency" aria-label="Add incoming dependency"><option value="">+ Add connection</option>${candidates.map(t=>`<option value="${esc(t.id)}">${esc(t.title)}</option>`).join('')}</select>
@@ -533,9 +561,10 @@ function renderInspector() {
 function resizeTitle() { const el=$('#inspector .title-input'); if(el){el.style.height='0px';el.style.height=`${Math.max(32,Math.min(180,el.scrollHeight+2))}px`;} }
 function renderList() {
   const rows=stepOutline(project);
-  $('#list-view').innerHTML=rows.length ? `<table><thead><tr><th>Step</th><th>Status</th><th class="table-deps">Depends on</th></tr></thead><tbody>${rows.map(({task:t,depth,number})=>`<tr data-depth="${depth}" class="${selected===t.id?'is-selected':''}"><td><div class="table-step" style="padding-inline-start:${depth*22}px"><span class="table-number">${number}</span><button class="table-task" data-action="select" data-id="${esc(t.id)}" ${depth?`aria-label="${esc(t.title)}, child of ${esc(project.tasks.find(p=>p.id===t.parent_id)?.title)}"`:''}>${esc(t.title)}</button></div></td><td><select data-table-status="${esc(t.id)}" aria-label="Status of ${esc(t.title)}">${statusOptions(t.status)}</select></td><td class="table-deps">${t.depends_on.map(id=>esc(project.tasks.find(d=>d.id===id)?.title || id)).join('<br>') || '—'}</td></tr>`).join('')}</tbody></table>` : '<div class="list-empty">No steps yet.</div>';
+  $('#list-view').innerHTML=rows.length ? `<table><thead><tr><th>Step</th><th>Status</th><th class="table-deps">Depends on</th></tr></thead><tbody>${rows.map(({task:t,depth,number})=>`<tr data-depth="${depth}" class="${selected===t.id?'is-selected':''}"><td><div class="table-step" style="padding-inline-start:${depth*22}px"><span class="table-number">${number}</span><button class="table-task" data-action="select" data-id="${esc(t.id)}" ${depth?`aria-label="${esc(t.title)}, child of ${esc(project.tasks.find(p=>p.id===t.parent_id)?.title)}"`:''}>${esc(t.title)}</button></div></td><td>${readOnly?`<span class="status-pill"><span class="status-dot ${esc(t.status)}"></span>${STATUS[t.status].label}</span>`:`<select data-table-status="${esc(t.id)}" aria-label="Status of ${esc(t.title)}">${statusOptions(t.status)}</select>`}</td><td class="table-deps">${t.depends_on.map(id=>esc(project.tasks.find(d=>d.id===id)?.title || id)).join('<br>') || '—'}</td></tr>`).join('')}</tbody></table>` : '<div class="list-empty">No steps yet.</div>';
 }
 function renameStep(id) {
+  if (readOnly) return;
   navigateTo(id);
   const node=$$('.task-node').find(el=>el.dataset.id===id),task=currentTask();
   if(!node || !task)return;
@@ -577,10 +606,12 @@ function refresh(inspector=true,graph=true) {
   renderHeader();if(graph)renderGraph();else{renderEdges();renderMinimap();}if(inspector)renderInspector();if(view==='list')renderList();
 }
 function removeEdge(source,target) {
+  if (readOnly) return;
   selectedEdge=null;
   change(doc=>{const t=doc.tasks.find(t=>t.id===target); if(t)t.depends_on=t.depends_on.filter(d=>d!==source);});
 }
 function editEdge(source,target) {
+  if (readOnly) return;
   if(!selectedEdge)return;
   const before=selectedEdge, [oldSource,oldTarget]=before.split('|'), next=clone(project);
   try {
@@ -605,6 +636,7 @@ function announceParentChanges(before,after) {
   }
 }
 function connect(source,target) {
+  if (readOnly) return;
   try {
     const before=project, next=addBranchDependency(project,source,target);connectFrom=null;
     if(change(()=>next,{validate:true}))announceParentChanges(before,next);
@@ -637,7 +669,7 @@ function freeStepPosition(preferred,size={width:NODE_W,height:NODE_H},nearParent
   throw Error('No open position found. Pan to another part of the canvas and try again.');
 }
 function addBlankStep(dependency=null,at=null,parent=null) {
-  if(['loading','error'].includes(mode))return;
+  if(readOnly || ['loading','error'].includes(mode))return;
   try {
     if(project.tasks.length>=500)throw Error('A workflow can contain at most 500 steps.');
     if(dependency&&!project.tasks.some(t=>t.id===dependency))throw Error('Dependency not found.');
@@ -664,6 +696,7 @@ function addBlankStep(dependency=null,at=null,parent=null) {
 
 /** An in-page confirmation works even where native confirm() is suppressed. */
 function requestDeleteStep(id=selected) {
+  if (readOnly) return;
   const task=project.tasks.find(t=>t.id===id),dialog=$('#delete-step-dialog');
   if(!task||dialog.open)return;
   pendingDeletion=id;
@@ -674,6 +707,7 @@ function requestDeleteStep(id=selected) {
   dialog.showModal();$('#delete-step-cancel').focus();
 }
 function confirmDeleteStep() {
+  if (readOnly) return;
   const id=pendingDeletion, task=project.tasks.find(t=>t.id===id);
   if(!task){$('#delete-step-error').textContent='This step is no longer in the project.';return;}
   // Pin the task ID on opening, and validate before making any destructive edit.
@@ -696,6 +730,17 @@ function download(filename,content,type='text/plain') {
 function exportBackup(format) {
   download(`project.${format}`,format==='json'?JSON.stringify(project,null,2)+'\n':toYaml(project)+'\n',format==='json'?'application/json':'application/yaml');
 }
+async function exportSvg() {
+  if (readOnly || mode !== 'server') return;
+  const button = $('#export-svg-option');
+  if (button.disabled) return;
+  button.disabled = true;
+  try {
+    const data = await request('/api/export/svg', {method:'POST',body:JSON.stringify({document:validateProject(project),layout_mode:layoutMode})});
+    const name = (project.project.name.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,70) || 'research-flow') + '.svg';
+    download(name,data.svg,'image/svg+xml');
+  } finally { button.disabled = false; }
+}
 function portableHtml(snapshot) {
   if(!portableTemplate)throw Error('Use Save to save this project to its file.');
   const doc=new DOMParser().parseFromString(portableTemplate,'text/html');
@@ -706,12 +751,13 @@ function portableHtml(snapshot) {
 const connectionToken = readAccessToken(portable);
 
 async function request(path, options={}) {
+  if (portable) throw Error('This saved HTML does not connect to a server. Run Research Flow to edit the workflow.');
   const r=await fetch(path,{...options,headers:{'Content-Type':'application/json','X-Research-Flow':'1',...(connectionToken ? {'X-Research-Flow-Token':connectionToken} : {}),...options.headers},cache:'no-store',signal:AbortSignal.timeout(7000)});
   const data=await r.json();if(!r.ok){const e=Error(data.error||'Request failed.');e.status=r.status;throw e;}return data;
 }
 function alertFile(message,changed=false) { conflict=changed;$('#file-alert-text').textContent=message;$('#file-alert').hidden=!message;renderHeader(); }
 async function save() {
-  if(busy || ['loading','error'].includes(mode))return;
+  if(readOnly || busy || ['loading','error'].includes(mode))return;
   try {
     const snapshot=validateProject(project);
     if(mode==='preview') {
@@ -728,7 +774,7 @@ async function save() {
   finally {busy=false;renderHeader();}
 }
 async function loadDisk() {
-  if(!['server','error'].includes(mode))return;
+  if(portable || !['server','error'].includes(mode))return;
   if(dirty()&&!confirm('Reload this project and discard unsaved changes in this tab? Keep a draft copy first to preserve them.'))return;
   try {
     const data=await request('/api/project');project=ensurePositions(validateProject(data.document));baseline=JSON.stringify(project);revision=data.revision;filePath=data.file;
@@ -736,7 +782,7 @@ async function loadDisk() {
   } catch(error){toast(error.message,true);}
 }
 async function checkExternal() {
-  if(!['server','error'].includes(mode)||busy||pollBusy||pointer||miniPointer||document.hidden||$('dialog[open]'))return;
+  if(portable || !['server','error'].includes(mode)||busy||pollBusy||pointer||miniPointer||document.hidden||$('dialog[open]'))return;
   pollBusy=true;
   try {
     const data=await request('/api/project');
@@ -780,17 +826,19 @@ const actions={
   'delete-card':el=>requestDeleteStep(el.dataset.id),
   'confirm-delete-step':confirmDeleteStep,
   'cancel-connect':()=>{connectFrom=null;updateConnectPrompt();renderEdges();},
-  'export-json':()=>exportBackup('json'),'export-yaml':()=>exportBackup('yaml'),
+  'export-json':()=>exportBackup('json'),'export-yaml':()=>exportBackup('yaml'),'export-svg':exportSvg,
   'close-dialog':el=>el.closest('dialog').close(),
-  help:()=>{$('#help-mode').textContent=mode==='server'?'Save writes to this project’s YAML file and backs up the previous version. Changes from your text editor are detected automatically.':'Changes live in this browser tab. Save copy downloads an editable HTML with your current work; reopen that copy to continue. YAML and JSON backups are available under More.';$('#help-dialog').showModal();},
+  help:()=>{$('#help-mode').textContent=readOnly?'This is a read-only snapshot. Run Research Flow with your workflow YAML file to edit it. Save refreshes the HTML beside that file; refresh this page to see the newer snapshot. This viewer works offline and does not connect to the editor.':mode==='server'?'Save writes to this project’s YAML file, backs up the previous version, and refreshes its interactive read-only HTML snapshot. Changes from your text editor are detected automatically. Export an SVG figure under More.':'Changes live in this browser tab. Save copy downloads an editable HTML with your current work; reopen that copy to continue. YAML and JSON backups are available under More.';$('#help-dialog').showModal();},
 };
+// Keep view-only actions explicit so future editor controls cannot modify snapshots.
+const viewerActions = new Set(['overview','focus','toggle-inspector','close-inspector','inspector-tab','select','toggle-children','view-list','set-layout','toggle-map','fit','zoom-in','zoom-out','zoom-reset','export-json','export-yaml','close-dialog','help']);
 document.addEventListener('click',event=>{
   const el=event.target.closest('[data-action]');
-  if(el && !el.disabled){event.preventDefault();const act=actions[el.dataset.action];if(act)Promise.resolve(act(el)).catch(e=>toast(e.message,true));}
+  if(el && !el.disabled){event.preventDefault();const act=actions[el.dataset.action];if(act && (!readOnly || viewerActions.has(el.dataset.action)))Promise.resolve(act(el)).catch(e=>toast(e.message,true));}
   if(!event.target.closest('.more-menu')||el)$('#more-menu').open=false;
   // Keyboard activation of connection handles uses native button semantics.
   const port=event.target.closest('[data-port]');
-  if(port && event.detail===0){if(port.dataset.port==='out'){connectFrom=port.dataset.id;updateConnectPrompt();}else if(connectFrom)connect(connectFrom,port.dataset.id);}
+  if(!readOnly && port && event.detail===0){if(port.dataset.port==='out'){connectFrom=port.dataset.id;updateConnectPrompt();}else if(connectFrom)connect(connectFrom,port.dataset.id);}
 });
 $('#project-title').addEventListener('input',e=>change(doc=>{doc.project.name=e.target.value;},{group:'project-name',inspector:false}));
 $('#project-title').addEventListener('blur',()=>{if(!project.project.name.trim())change(doc=>{doc.project.name='Untitled project';},{group:'project-name',inspector:false});});
@@ -801,6 +849,7 @@ $('#inspector').addEventListener('keydown',e=>{
   else if(e.key==='Escape'&&e.target.matches('input,textarea,select')){e.stopPropagation();e.target.blur();}
 });
 $('#inspector').addEventListener('input',e=>{
+  if (readOnly) return;
   const el=e.target;if(!el.dataset.field||!currentTask())return;
   const field=el.dataset.field,value=['inputs','outputs'].includes(field)?el.value.split('\n').map(x=>x.trim()).filter(Boolean):field==='title'&&!el.value.trim()?'Untitled step':el.value;
   change(doc=>{doc.tasks.find(t=>t.id===selected)[field]=value;},{group:`${selected}-${field}`,inspector:false});
@@ -828,6 +877,7 @@ canvas.addEventListener('pointerdown',event=>{
   const hierarchy=event.target.closest('[data-hierarchy]'),bundle=event.target.closest('[data-bundle]');
   if(hierarchy){navigateTo(hierarchy.dataset.hierarchy);event.preventDefault();return;}
   if(bundle){revealBundle(bundle.dataset.bundle);event.preventDefault();return;}
+  if(readOnly && node){navigateTo(node.dataset.id);event.preventDefault();return;}
   if(port?.dataset.port==='out'){
     connectFrom=port.dataset.id;pointer={type:'connect',id:connectFrom,clientX:event.clientX,clientY:event.clientY,moved:false};updateConnectPrompt();
   } else if(connectFrom&&node){connect(connectFrom,node.dataset.id);event.preventDefault();return;}
@@ -843,12 +893,12 @@ canvas.addEventListener('pointermove',event=>{
   const dx=event.clientX-pointer.clientX,dy=event.clientY-pointer.clientY;
   if(Math.abs(dx)+Math.abs(dy)>3)pointer.moved=true;
   if(pointer.type==='pan'){transform.x=pointer.x+dx;transform.y=pointer.y+dy;applyTransform();}
-  if(pointer.type==='node'&&pointer.moved){
+  if(!readOnly&&pointer.type==='node'&&pointer.moved){
     if(!pointer.moveBase){pointer.moveBase=startFreeformMove(clone(pointer.before));renderStages();renderHeader();}
     project=moveBranch(pointer.moveBase,pointer.id,dx/transform.zoom,dy/transform.zoom);
     for(const id of [pointer.id,...descendantIds(project,pointer.id)]){const p=positionOf(id),el=$(`.task-node[data-id="${id}"]`);if(el){el.style.left=`${p.x}px`;el.style.top=`${p.y}px`;el.classList.add('dragging');}}renderEdges();renderMinimap();
   }
-  if(pointer.type==='connect'&&pointer.moved){
+  if(!readOnly&&pointer.type==='connect'&&pointer.moved){
     const p=positionOf(pointer.id),{width:NODE_W,height:NODE_H}=taskSize(project.tasks.find(t=>t.id===pointer.id)),end=pointInWorld(event.clientX,event.clientY);renderEdges();
     $('#edges').insertAdjacentHTML('beforeend',`<path class="edge-preview" d="M ${p.x+NODE_W} ${p.y+NODE_H/2} C ${p.x+300} ${p.y+NODE_H/2}, ${end.x-60} ${end.y}, ${end.x} ${end.y}"/>`);
     const target=document.elementFromPoint(event.clientX,event.clientY)?.closest('.task-node');$$('.task-node').forEach(n=>n.classList.toggle('connect-target',n===target && n.dataset.id!==pointer.id));
@@ -873,6 +923,7 @@ function finishPointer(event,cancelled=false){
 }
 canvas.addEventListener('pointerup',e=>finishPointer(e));canvas.addEventListener('pointercancel',e=>finishPointer(e,true));
 canvas.addEventListener('dblclick',event=>{
+  if (readOnly) return;
   if($('.node-title-input')||controlTarget(event.target)||event.target.closest('[data-port],[data-node-action],.node-title-input,[data-edge],[data-hierarchy],[data-bundle]'))return;
   // Pointer capture and selection redraws can retarget dblclick to the canvas.
   const recent=lastNodeClick && performance.now()-lastNodeClick.time<600 && Math.hypot(event.clientX-lastNodeClick.x,event.clientY-lastNodeClick.y)<8;
@@ -913,13 +964,25 @@ document.addEventListener('keydown',e=>{
     $$('.task-node').find(n=>n.dataset.id===id)?.focus();
   }
 });
-window.addEventListener('beforeunload',e=>{if(dirty()){e.preventDefault();e.returnValue='';}});
+window.addEventListener('beforeunload',e=>{if(!readOnly&&dirty()){e.preventDefault();e.returnValue='';}});
 new ResizeObserver(()=>applyTransform()).observe(canvas);
 $$('[data-icon]').forEach(el=>el.innerHTML=icon(el.dataset.icon));
 $('#add-button').setAttribute('aria-label','Add step');
+document.body.classList.toggle('read-only',readOnly);
+$$('[data-edit-only]').forEach(el=>el.hidden=readOnly);
+$('#viewer-help').hidden=!readOnly;
+if (readOnly) {
+  $('#project-title').readOnly=true;
+  $('#project-title').title='Project title · Read-only snapshot';
+  $('.canvas-column').setAttribute('aria-label','Workflow viewer');
+  canvas.setAttribute('aria-label','Workflow viewer. Select a step to read its details. Drag the background to pan; scroll to zoom.');
+  $('#empty-state h1').textContent='No steps saved yet.';
+  $('#empty-state p').textContent='Run Research Flow to add steps to this workflow.';
+  $('#empty-state [data-action="add"]').hidden=true;
+}
 refresh();
 async function init(){
-  if(portable)mode='preview';
+  if(portable)mode=readOnly?'viewer':'preview';
   else{
     try{
       const data=await request('/api/project');project=ensurePositions(validateProject(data.document));baseline=JSON.stringify(project);revision=data.revision;filePath=data.file;mode='server';
@@ -928,6 +991,6 @@ async function init(){
   selected=null;selectedEdge=null;closeInspector();refresh();fitGraph();
   if(matchMedia('(max-width:700px)').matches&&project.tasks.length){const p=positionOf(project.tasks[0].id);transform.zoom=.95;transform.x=canvas.clientWidth/2-(p.x+NODE_W/2)*transform.zoom;transform.y=canvas.clientHeight/2-(p.y+NODE_H/2)*transform.zoom;applyTransform();}
   logoMotion.play('load');
-  setInterval(checkExternal,3500);
+  if(!portable)setInterval(checkExternal,3500);
 }
 init();
