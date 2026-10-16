@@ -34,6 +34,11 @@ DEFAULT_PORT = 8765
 MAX_BYTES = 2_000_000
 STATUSES = {'todo', 'in_progress', 'blocked', 'done'}
 MAX_SUBSTEPS = 200
+MAX_OPERATION_RECORDS = 200
+RECORD_STATUSES = {'recorded', 'completed', 'failed', 'partial'}
+MAX_IDEAS = 500
+IDEA_KINDS = {'idea', 'question', 'decision'}
+IDEA_STATUSES = {'open', 'deferred', 'resolved'}
 
 class ValidationError(ValueError):
     pass
@@ -80,6 +85,70 @@ def json_safe(value, active=None, depth=0):
     elif isinstance(value, (int, float)) and (abs(value) > 2**53 - 1 or not math.isfinite(value)):
         raise ValidationError('Numbers must be finite and within JavaScript’s safe numeric range.')
 
+def task_layer(task):
+    """Infer legacy roles without inserting new fields into saved documents."""
+    return task.get('layer', 'operation' if task.get('parent_id') else 'overview')
+
+def validate_operation_fields(task):
+    task_id = task['id']
+    if 'layer' in task and (not isinstance(task['layer'], str) or task['layer'] not in {'overview', 'operation', 'processing'}):
+        raise ValidationError(f'Invalid layer for {task_id}.')
+    for field in ('overview_id', 'operation_id', 'operation_type', 'method', 'parameters', 'rationale'):
+        if field in task and not isinstance(task[field], str):
+            raise ValidationError(f'{task_id}.{field} must be text.')
+    if 'records' in task:
+        if not isinstance(task['records'], list) or len(task['records']) > MAX_OPERATION_RECORDS:
+            raise ValidationError(f'{task_id}.records must be a list with at most {MAX_OPERATION_RECORDS} entries.')
+        ids = set()
+        for record in task['records']:
+            if not isinstance(record, dict) or not isinstance(record.get('id'), str) or not re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}', record['id']):
+                raise ValidationError(f'Invalid record ID on {task_id}.')
+            record_id = record['id']
+            if record_id in ids:
+                raise ValidationError(f'Duplicate record ID on {task_id}: {record_id}')
+            ids.add(record_id)
+            for field in ('recorded_at', 'method'):
+                if not isinstance(record.get(field), str) or not record[field].strip():
+                    raise ValidationError(f'Record {record_id}.{field} must be nonempty text.')
+            if not isinstance(record.get('status'), str) or record['status'] not in RECORD_STATUSES:
+                raise ValidationError(f'Invalid status for record {record_id}.')
+            for field in ('performed_at', 'parameters', 'rationale', 'changes', 'code', 'software', 'notes'):
+                if field in record and not isinstance(record[field], str):
+                    raise ValidationError(f'Record {record_id}.{field} must be text.')
+            for field in ('inputs', 'outputs'):
+                if field in record and (not isinstance(record[field], list) or not all(isinstance(value, str) for value in record[field])):
+                    raise ValidationError(f'Record {record_id}.{field} must be a list of strings.')
+    if 'selected_record_id' in task and (not isinstance(task['selected_record_id'], str) or
+            not any(record['id'] == task['selected_record_id'] for record in task.get('records', []))):
+        raise ValidationError(f'Unknown selected record on {task_id}.')
+
+def validate_ideas(value, task_ids):
+    if 'ideas' not in value:
+        return
+    ideas = value['ideas']
+    if not isinstance(ideas, list) or len(ideas) > MAX_IDEAS:
+        raise ValidationError(f'ideas must be a list with at most {MAX_IDEAS} entries.')
+    ids = set()
+    for idea in ideas:
+        if not isinstance(idea, dict) or not isinstance(idea.get('id'), str) or not re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}', idea['id']):
+            raise ValidationError('Idea IDs must use letters, numbers, underscores, or hyphens (1–64 characters).')
+        idea_id = idea['id']
+        if idea_id in ids:
+            raise ValidationError(f'Duplicate idea ID: {idea_id}')
+        ids.add(idea_id)
+        for field in ('title', 'created_at'):
+            if not isinstance(idea.get(field), str) or not idea[field].strip():
+                raise ValidationError(f'Idea {idea_id}.{field} must be nonempty text.')
+        if not isinstance(idea.get('kind'), str) or idea['kind'] not in IDEA_KINDS:
+            raise ValidationError(f'Invalid kind for idea {idea_id}.')
+        if not isinstance(idea.get('status'), str) or idea['status'] not in IDEA_STATUSES:
+            raise ValidationError(f'Invalid status for idea {idea_id}.')
+        for field in ('notes', 'revisit_when', 'resolution', 'updated_at', 'resolved_at', 'related_task_id'):
+            if field in idea and not isinstance(idea[field], str):
+                raise ValidationError(f'Idea {idea_id}.{field} must be text.')
+        if 'related_task_id' in idea and idea['related_task_id'] not in task_ids:
+            raise ValidationError(f'Unknown related task on idea {idea_id}.')
+
 def validate_project(value):
     json_safe(value)
     if not isinstance(value, dict) or type(value.get('schema_version')) is not int or value['schema_version'] != 1:
@@ -121,6 +190,7 @@ def validate_project(value):
                 raise ValidationError(f'{task_id}.{field} must be a list of strings.')
         if len(set(task['depends_on'])) != len(task['depends_on']):
             raise ValidationError(f'Duplicate dependency on {task_id}.')
+        validate_operation_fields(task)
         # An optional backward-compatible field. Do not add empty lists to old files.
         if 'substeps' in task:
             subs = task['substeps']
@@ -182,6 +252,14 @@ def validate_project(value):
             parent = entry.get('parent_id')
             if parent is not None and not isinstance(parent, str):
                 raise ValidationError('Invalid parent ID.')
+        if 'overview_id' in task:
+            overview = by_id.get(task['overview_id'])
+            if task_layer(task) != 'operation' or overview is None or overview['id'] == task['id'] or task_layer(overview) != 'overview':
+                raise ValidationError(f'Invalid overview association on {task["id"]}.')
+        if 'operation_id' in task:
+            operation = by_id.get(task['operation_id'])
+            if task_layer(task) != 'processing' or operation is None or operation['id'] == task['id'] or task_layer(operation) != 'operation':
+                raise ValidationError(f'Invalid operation association on {task["id"]}.')
 
     for task in tasks:
         for dep in task['depends_on']:
@@ -211,6 +289,16 @@ def validate_project(value):
     for task_id, position in positions.items():
         if not isinstance(position, dict) or not all(type(position.get(k)) in (int, float) and math.isfinite(position[k]) and abs(position[k]) <= 10000000 for k in ('x', 'y')):
             raise ValidationError(f'Invalid layout position: {task_id}')
+    if 'layer_positions' in layout:
+        layer_positions = layout['layer_positions']
+        if not isinstance(layer_positions, dict):
+            raise ValidationError('layout.layer_positions must be an object.')
+        for task_id, position in layer_positions.items():
+            if task_id not in by_id:
+                raise ValidationError(f'Unknown task in layout.layer_positions: {task_id}')
+            if not isinstance(position, dict) or not all(type(position.get(k)) in (int, float) and math.isfinite(position[k]) and abs(position[k]) <= 10000000 for k in ('x', 'y')):
+                raise ValidationError(f'Invalid layer layout position: {task_id}')
+    validate_ideas(value, by_id)
     return value
 
 def parse_project(text):
@@ -381,6 +469,7 @@ class ProjectStore:
 
 STATIC = {'/': ('index.html', 'text/html; charset=utf-8'), '/index.html': ('index.html', 'text/html; charset=utf-8'),
           '/app.js': ('app.js', 'text/javascript; charset=utf-8'), '/model.mjs': ('model.mjs', 'text/javascript; charset=utf-8'),
+          '/layers.mjs': ('layers.mjs', 'text/javascript; charset=utf-8'),
           '/connection.mjs': ('connection.mjs', 'text/javascript; charset=utf-8'),
           '/styles.css': ('styles.css', 'text/css; charset=utf-8'),
           '/assets/research-flow-icon-light.svg': ('assets/research-flow-icon-light.svg', 'image/svg+xml'),

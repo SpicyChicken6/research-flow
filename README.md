@@ -10,7 +10,9 @@ own machine or Linux server.
 
 ## Features
 
-- **Dependency stages** — group steps automatically from left to right, with independent steps together; switch to freeform to use your saved arrangement.
+- **Three connected layers** — move from overview decisions to research operations to methods and work records. Track literature, downloads, code, analysis and writing with versioned accounts of inputs, parameters, outputs and rationale. See the [three-layer guide](docs/three-layers.md).
+- **Ideas & questions** — capture possibilities and decisions to revisit, optionally link them to a step, and preserve their outcomes when resolved.
+- **Organized overview** — Graph keeps high-level steps in numbered order; use Layers for freely arranged cards and their detailed work.
 - **Canvas editing** — arrange, connect, rename, and delete steps directly on the canvas.
 - **Nested branches** — organize numbered steps and children, with an indented list view.
 - **Focus and overview** — zoom into a branch or navigate the whole project with the minimap.
@@ -39,9 +41,8 @@ Open the private URL printed in the terminal. Keep the app running and click
 **Save** to write your changes to the selected YAML file.
 
 Saving `workflow.yaml` also creates or updates `workflow.svg` in the same folder
-on the machine running Research Flow. The image uses the current Stages or
-Freeform layout and includes all branches, even when focused or collapsed in the
-editor. Open the SVG directly, or embed it in a Markdown file with
+on the machine running Research Flow. The image groups the full graph by dependency
+stage and includes all branches, even when focused or collapsed in the editor. Open the SVG directly, or embed it in a Markdown file with
 `![Workflow](workflow.svg)`. Opening a workflow does not create or update a preview.
 
 If the preview cannot be written, your YAML still saves: the app shows

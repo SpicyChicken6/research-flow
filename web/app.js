@@ -1,5 +1,8 @@
 import { readAccessToken } from './connection.mjs';
-import { STATUS, clone, validateProject, addDependency, addBranchDependency, removeTask, autoLayout, toYaml, insertBlankStep, childrenOf, descendantIds, ancestorIds, taskSize, setParent, moveBranch, stepOutline, setStepNumber, stageLayout, dependencyPathIds, dependencyPathEdges } from './model.mjs';
+import { STATUS, clone, validateProject, addDependency, addBranchDependency, removeTask, autoLayout, toYaml, insertBlankStep, childrenOf, descendantIds, ancestorIds, taskSize, setParent, stepOutline, setStepNumber, overviewStepLayout, dependencyPathIds, dependencyPathEdges } from './model.mjs';
+import { taskLayer, overviewSteps, overviewGraph, operationsFor, processingStepsFor, addOperationRecord, selectOperationRecord } from './model.mjs';
+import { addIdea, updateIdea, removeIdea } from './model.mjs';
+import { resolveLayerSelection, computeLayerCanvas, renderLayeredView, renderMethodDetails, renderIdeasList, overviewConnector } from './layers.mjs';
 // BEGIN LOGO MOTION — presentation only; no project or history state.
 const LOGO_MOTION = Object.freeze({loadDuration:720, viewDuration:480});
 function createLogoMotion(svg) {
@@ -68,6 +71,9 @@ function createLogoMotion(svg) {
 // END LOGO MOTION
 
 const paths = {
+  'view-layers': '<path d="m12 3 9 5-9 5-9-5 9-5ZM3 12l9 5 9-5M3 16l9 5 9-5"/>',
+  'view-graph': '<circle cx="5" cy="12" r="3"/><circle cx="18" cy="5" r="3"/><circle cx="18" cy="19" r="3"/><path d="m7.6 10.6 7.8-4.2m-7.8 7 7.8 4.2"/>',
+  'view-list': '<rect x="3" y="4" width="4" height="4" rx=".5"/><rect x="3" y="10" width="4" height="4" rx=".5"/><rect x="3" y="16" width="4" height="4" rx=".5"/><path d="M11 6h10M11 12h10M11 18h10"/>',
   more: '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>',
   chevron: '<path d="m8 10 4 4 4-4"/>',
   up: '<path d="m6 14 6-6 6 6"/>',
@@ -117,7 +123,12 @@ const portableTemplate = portable ? '<!doctype html>\n' + document.documentEleme
 let project = ensurePositions(validateProject(JSON.parse($('#initial-project').textContent)));
 let baseline = JSON.stringify(project), revision = null, mode = 'loading', filePath = 'project.yaml';
 let selected = null, selectedEdge = null, inspectorTab = 'plan', focusMode = false, view = 'graph';
-let layoutMode = 'stages', stageCache = null, stageProject = null;
+let layerSelection = {}, recordingTaskId = null;
+let layerCamera = {x:0,y:0,zoom:1,autoFit:true}, layerPointer = null;
+let layerClickSuppressedUntil = 0;
+let ideasOpen = false, ideasFilter = 'active', expandedIdeaId = null, editingIdeaId = null, deletingIdeaId = null;
+let stageCache = null, stageProject = null;
+let graphCache = null, graphProject = null;
 let pointer = null, connectFrom = null, mapOpen = true;
 let pendingDeletion = null;
 let lastNodeClick = null;
@@ -134,21 +145,19 @@ const logoMotion = createLogoMotion($('.brand-logo'));
 let lastLogoView = null;
 const dirty = () => JSON.stringify(project) !== baseline;
 const currentTask = () => project.tasks.find(t => t.id === selected);
+function graphDocument() {
+  if (graphProject !== project) {
+    const projection=overviewGraph(project),byId=new Map(projection.tasks.map(task=>[task.id,task]));
+    graphCache={...projection,tasks:stepOutline(project).map(({task})=>byId.get(task.id)).filter(Boolean)};
+    graphProject=project;
+  }
+  return graphCache;
+}
 function stagedLayout() {
-  if (stageProject !== project) { stageCache = stageLayout(project); stageProject = project; }
+  if (stageProject !== project) { stageCache = overviewStepLayout(project); stageProject = project; }
   return stageCache;
 }
-const positionOf = id => (layoutMode === 'stages' ? stagedLayout().positions : project.layout.positions)[id] || {x:0, y:0};
-// Only a deliberate move copies the staged positions into the saved freeform layout.
-function startFreeformMove(doc) {
-  if (layoutMode === 'stages') {
-    for (const [id, position] of Object.entries(stagedLayout().positions)) {
-      doc.layout.positions[id] = {...doc.layout.positions[id], ...position};
-    }
-    layoutMode = 'freeform';
-  }
-  return doc;
-}
+const positionOf = id => stagedLayout().positions[id] || {x:0, y:0};
 const edgeExists = key => { if (!key) return false; const [a,b] = key.split('|'); return project.tasks.some(t => t.id === b && t.depends_on.includes(a)); };
 function ensurePositions(doc) {
   if(!doc.tasks.length)return doc;
@@ -171,54 +180,53 @@ function toast(message, error = false) {
   const el = document.createElement('div'); el.className = `toast${error ? ' error' : ''}`; el.textContent = message;
   $('#toasts').append(el); setTimeout(() => el.remove(), error ? 6500 : 3200);
 }
-function remember(before, group = '', beforeLayout = layoutMode) {
+function remember(before, group = '') {
   if (!group || group !== lastGroup || Date.now() - groupTime > 900) {
-    history.push({document:before, layoutMode:beforeLayout===layoutMode?null:beforeLayout});
+    history.push({document:before});
     if (history.length > 70) history.shift();
   }
   lastGroup = group; groupTime = Date.now(); future = [];
 }
 function change(fn, {group='', inspector=true, validate=false, graph=true} = {}) {
-  const before = clone(project), next = clone(project), beforeLayout = layoutMode;
+  const before = clone(project), next = clone(project);
   try {
     const result = fn(next) || next;
     if (validate) validateProject(result);
     if (JSON.stringify(before) === JSON.stringify(result)) return true;
-    remember(before, group, beforeLayout); project = result; refresh(inspector,graph); return true;
-  } catch(error) { layoutMode = beforeLayout; toast(error.message, true); return false; }
+    remember(before, group); project = result; refresh(inspector,graph); return true;
+  } catch(error) { toast(error.message, true); return false; }
 }
 function restoreHistory(from,to) {
   if(!from.length)return;
   const entry=from.pop();
-  to.push({document:clone(project),layoutMode:entry.layoutMode===null?null:layoutMode});
+  to.push({document:clone(project)});
   project=entry.document;
-  if(entry.layoutMode!==null)layoutMode=entry.layoutMode;
-  lastGroup='';refresh();if(layoutMode==='stages')fitGraph();
+  lastGroup='';refresh();if(view==='graph')fitGraph();
 }
 function undo() { restoreHistory(history,future); }
 function redo() { restoreHistory(future,history); }
 function focusedIds() {
   const t=currentTask(); if(!focusMode || !t)return null;
-  const branch=new Set([t.id,...descendantIds(project,t.id)]), ids=new Set(branch);
-  for(const node of project.tasks) {
+  const branch=new Set([t.id,...descendantIds(graphDocument(),t.id)]), ids=new Set(branch);
+  for(const node of graphDocument().tasks) {
     if(branch.has(node.id))node.depends_on.forEach(id=>ids.add(id));
     if(node.depends_on.some(id=>branch.has(id)))ids.add(node.id);
   }
-  ancestorIds(project,t.id).forEach(id=>ids.add(id));
+  ancestorIds(graphDocument(),t.id).forEach(id=>ids.add(id));
   return ids;
 }
 function representative(id) {
   let result=id;
-  for(const parent of ancestorIds(project,id))if(collapsedBranches.has(parent))result=parent;
+  for(const parent of ancestorIds(graphDocument(),id))if(collapsedBranches.has(parent))result=parent;
   return result;
 }
 function visibleTasks() {
   const ids=focusedIds();
-  return project.tasks.filter(t=>(!ids || ids.has(t.id)) && representative(t.id)===t.id);
+  return graphDocument().tasks.filter(t=>(!ids || ids.has(t.id)) && representative(t.id)===t.id);
 }
-function revealPath(id) {ancestorIds(project,id).forEach(parent=>collapsedBranches.delete(parent));}
+function revealPath(id) {ancestorIds(graphDocument(),id).forEach(parent=>collapsedBranches.delete(parent));}
 function toggleBranch(id) {
-  const kids=childrenOf(project,id);if(!kids.length)return;
+  const kids=childrenOf(graphDocument(),id);if(!kids.length)return;
   const focusIds=focusedIds();
   // A dependency neighbor's children may be outside the focused branch.
   // Expanding it makes that branch the focus instead of showing a dead control.
@@ -229,14 +237,16 @@ function toggleBranch(id) {
   if(collapsedBranches.has(id))collapsedBranches.delete(id);
   else {
     collapsedBranches.add(id);
-    if(selected && descendantIds(project,id).has(selected)){selected=id;selectedEdge=null;}
+    if(selected && descendantIds(graphDocument(),id).has(selected)){selected=id;selectedEdge=null;}
     if(selectedEdge){const [a,b]=selectedEdge.split('|');if(representative(a)!==a||representative(b)!==b)selectedEdge=null;}
   }
   refresh();
 }
 function reparent(id,parent) {
   try {
-    const next=setParent(project,id,parent);
+    const source=clone(project);
+    if(view==='graph')source.tasks.find(t=>t.id===id).layer='overview';
+    const next=setParent(source,id,parent);
     revealPath(parent); if(parent)collapsedBranches.delete(parent);
     if(change(()=>next,{validate:true})) {revealPath(id);refresh();keepSelectedVisible();}
   }catch(error){toast(error.message,true);renderInspector();}
@@ -248,18 +258,19 @@ function revealBundle(key) {
   showInspector();switchView('graph');refresh();fitGraph();
 }
 
-function showInspector() { $('#inspector').hidden = false; }
+function showInspector() { ideasOpen=false; $('#ideas-panel').hidden=true; $('.canvas-column').inert=false; $('#inspector').hidden = false; }
 function closeInspector() { $('#inspector').hidden = true; renderHeader(); }
 function clearSelection() { selected=null; selectedEdge=null; focusMode=false; connectFrom=null; closeInspector(); refresh(); }
 function navigateTo(id) {
   if (!project.tasks.some(t => t.id === id)) return;
+  if(view==='layers'||(view==='graph'&&taskLayer(project.tasks.find(t=>t.id===id))!=='overview')){switchView('layers');layerSelectTask(id);return;}
   if (selected !== id) inspectorTab = 'plan';
   revealPath(id); selected=id; selectedEdge=null; connectFrom=null; showInspector(); refresh();
   if (focusMode) fitGraph(); else keepSelectedVisible();
 }
 function keepSelectedVisible(id=selected) {
-  const task=project.tasks.find(t=>t.id===id);
-  if (view !== 'graph' || !task) return;
+  const task=graphDocument().tasks.find(t=>t.id===id);
+  if (view !== 'graph' || !task || taskLayer(task)!=='overview') return;
   const p = positionOf(id), c = $('#canvas'), {width:NODE_W,height:NODE_H}=taskSize(task);
   const available = matchMedia('(max-width:700px)').matches && !$('#inspector').hidden ? Math.max(0, c.clientWidth-$('#inspector').offsetWidth) : c.clientWidth;
   if (available < 200) return; // Mobile details overlay must not move the user's canvas.
@@ -289,34 +300,32 @@ function renderHeader() {
   $('#focus-button').setAttribute('aria-pressed', String(focusMode));
   $('#overview-button').classList.toggle('active', !focusMode && view === 'graph');
   $('#overview-button').setAttribute('aria-pressed', String(!focusMode && view === 'graph'));
+  $('#ideas-panel').hidden=!ideasOpen;
+  $('#ideas-button').classList.toggle('active',ideasOpen);
+  $('#ideas-button').setAttribute('aria-expanded',String(ideasOpen));
+  $('.canvas-column').inert=ideasOpen&&matchMedia('(max-width:700px)').matches;
   $('#details-button').hidden = !currentTask() && !selectedEdge;
   $('#details-button').classList.toggle('active', !$('#inspector').hidden);
   $('#details-button').setAttribute('aria-expanded', String(!$('#inspector').hidden));
   $('#list-button').classList.toggle('active', view === 'list');
   $('#list-button').setAttribute('aria-pressed', String(view === 'list'));
+  $('#layers-button').classList.toggle('active', view === 'layers');
+  $('#layers-button').setAttribute('aria-pressed', String(view === 'layers'));
   $('#arrange-button').hidden = view !== 'graph';
-  $('#layout-control').hidden = view !== 'graph';
-  $$('#layout-control [data-layout]').forEach(button=>{
-    const active=button.dataset.layout===layoutMode;
-    button.classList.toggle('active',active);button.setAttribute('aria-pressed',String(active));
-  });
-  $('#arrange-button').title = layoutMode === 'stages' ? 'Fit automatically arranged stages' : 'Arrange all steps';
-  const count=visibleTasks().length;
-  $('#view-context').textContent = view==='graph' && count<project.tasks.length ? `${count} of ${project.tasks.length} steps` : `${project.tasks.length} step${project.tasks.length===1?'':'s'}`;
+  const count=visibleTasks().length, total=view==='graph'?graphDocument().tasks.length:project.tasks.length;
+  $('#view-context').textContent = view==='graph' ? `${count<total?`${count} of `:''}${total} overview step${total===1?'':'s'}` : `${total} step${total===1?'':'s'}`;
   const mo=$('#map-option'); mo.innerHTML = `${icon('map')}${mapOpen ? 'Hide' : 'Show'} minimap`; mo.setAttribute('aria-pressed',String(mapOpen));
   $('[data-action="layout"]').disabled = view !== 'graph';
 }
 function edgeGeometry(source,target) {
-  const a=positionOf(source),b=positionOf(target);
-  const sa=taskSize(project.tasks.find(t=>t.id===source)),sb=taskSize(project.tasks.find(t=>t.id===target));
-  const sx=a.x+sa.width,sy=a.y+sa.height/2,tx=b.x,ty=b.y+sb.height/2;
-  const curve=Math.max(55,Math.abs(tx-sx)*.5);
-  return {d:`M ${sx} ${sy} C ${sx+curve} ${sy}, ${tx-curve} ${ty}, ${tx} ${ty}`, x:(sx+tx)/2,y:(sy+ty)/2};
+  const nodes=visibleTasks().map(task=>({id:task.id,...positionOf(task.id),...taskSize(task)}));
+  const edge=overviewConnector(nodes.find(node=>node.id===source),nodes.find(node=>node.id===target),nodes);
+  return {d:edge.path,x:(edge.start.x+edge.end.x)/2,y:(edge.start.y+edge.end.y)/2};
 }
 function hierarchyPath(parent,child) {
   const a=positionOf(parent),b=positionOf(child);
-  const pa=taskSize(project.tasks.find(t=>t.id===parent)),ch=taskSize(project.tasks.find(t=>t.id===child));
-  if(layoutMode==='stages' && Math.abs(a.x-b.x)<Math.max(pa.width,ch.width)) {
+  const pa=taskSize(graphDocument().tasks.find(t=>t.id===parent)),ch=taskSize(graphDocument().tasks.find(t=>t.id===child));
+  if(Math.abs(a.x-b.x)<Math.max(pa.width,ch.width)) {
     // A shared side gutter keeps sibling branches out of intervening cards.
     const gutter=Math.min(a.x,b.x)-14;
     return `M ${a.x} ${a.y+pa.height-20} H ${gutter} V ${b.y+20} H ${b.x}`;
@@ -326,7 +335,6 @@ function hierarchyPath(parent,child) {
   return `M ${sx} ${sy} C ${sx} ${middle}, ${tx} ${middle}, ${tx} ${ty}`;
 }
 function visibleStageFrames() {
-  if (layoutMode !== 'stages') return [];
   const tasks=visibleTasks(); if (!tasks.length) return [];
   const shown=new Set(tasks.map(t=>t.id));
   const top=Math.min(...tasks.map(t=>positionOf(t.id).y))-72;
@@ -336,19 +344,19 @@ function visibleStageFrames() {
 }
 function renderStages() {
   $('#stages').innerHTML=visibleStageFrames().map(stage=>
-    `<section class="stage-column" data-stage="${stage.index}" aria-label="Stage ${stage.index+1}" style="left:${stage.x}px;top:${stage.y}px;width:${stage.width}px;height:${stage.height}px"><h2>Stage ${stage.index+1}</h2></section>`).join('');
+    `<section class="stage-column" data-stage="${stage.index}" aria-label="${esc(stage.label)}" style="left:${stage.x}px;top:${stage.y}px;width:${stage.width}px;height:${stage.height}px"><h2>${esc(stage.label)}</h2></section>`).join('');
 }
 function renderEdges() {
   const shown=new Set(visibleTasks().map(t=>t.id));dependencyBundles=new Map();
-  const relatedEdges=selected&&!selectedEdge ? dependencyPathEdges(project,selected) : new Set();
+  const relatedEdges=selected&&!selectedEdge ? dependencyPathEdges(graphDocument(),selected) : new Set();
   let html=`<defs><marker id="arrowhead" viewBox="0 0 8 8" refX="10" refY="4" markerWidth="5" markerHeight="5" orient="auto"><path d="M0 0L8 4L0 8" fill="#91a1b6"/></marker><marker id="selected-arrow" viewBox="0 0 8 8" refX="10" refY="4" markerWidth="5" markerHeight="5" orient="auto"><path d="M0 0L8 4L0 8" fill="#276cdb"/></marker></defs>`;
-  for(const t of project.tasks) {
+  for(const t of graphDocument().tasks) {
     if(!t.parent_id||!shown.has(t.id)||!shown.has(t.parent_id))continue;
-    const parent=project.tasks.find(p=>p.id===t.parent_id),d=hierarchyPath(t.parent_id,t.id);
+    const parent=graphDocument().tasks.find(p=>p.id===t.parent_id),d=hierarchyPath(t.parent_id,t.id);
     html+=`<g><path class="hierarchy-path ${[t.id,t.parent_id].includes(selected)?'related':''}" d="${d}"/><path class="hierarchy-hit" d="${d}" data-hierarchy="${esc(t.id)}" role="button" tabindex="0" aria-label="${esc(t.title)} belongs to ${esc(parent.title)}"><title>Part of: ${esc(parent.title)} — not a dependency</title></path></g>`;
   }
   const grouped=new Map();
-  for(const t of project.tasks)for(const dep of t.depends_on) {
+  for(const t of graphDocument().tasks)for(const dep of t.depends_on) {
     const a=representative(dep),b=representative(t.id);
     if(a===b||!shown.has(a)||!shown.has(b))continue;
     const key=`${a}|${b}`;if(!grouped.has(key))grouped.set(key,[]);
@@ -360,10 +368,10 @@ function renderEdges() {
     if(isBundle) {
       dependencyBundles.set(key,edges);
       const label=`${edges.length} hidden link${edges.length===1?'':'s'}`;
-      const desc=edges.map(e=>`${project.tasks.find(t=>t.id===e.source).title} → ${project.tasks.find(t=>t.id===e.target).title}`).join('; ');
+      const desc=edges.map(e=>`${graphDocument().tasks.find(t=>t.id===e.source).title} → ${graphDocument().tasks.find(t=>t.id===e.target).title}`).join('; ');
       html+=`<g><path class="edge-path bundled ${edges.some(e=>relatedEdges.has(`${e.source}|${e.target}`))?'related':''}" d="${g.d}" marker-end="url(#arrowhead)"/><path class="edge-hit" d="${g.d}" data-bundle="${esc(key)}" role="button" tabindex="0" aria-label="Reveal ${label}: ${esc(desc)}"><title>${esc(desc)}</title></path><g class="bundle-label" data-bundle="${esc(key)}" role="button" tabindex="0" aria-label="Reveal ${label}"><rect x="${g.x-42}" y="${g.y-9}" width="84" height="18" rx="4"/><text x="${g.x}" y="${g.y+3}">${label}</text></g></g>`;
     } else {
-      const source=project.tasks.find(t=>t.id===a),target=project.tasks.find(t=>t.id===b),chosen=key===selectedEdge,related=relatedEdges.has(key);
+      const source=graphDocument().tasks.find(t=>t.id===a),target=graphDocument().tasks.find(t=>t.id===b),chosen=key===selectedEdge,related=relatedEdges.has(key);
       html+=`<g><path class="edge-path ${chosen?'selected':related?'related':''}" d="${g.d}" marker-end="url(#${chosen?'selected-arrow':'arrowhead'})"/><path class="edge-hit" d="${g.d}" data-edge="${esc(key)}" tabindex="0" role="button" aria-label="Connection from ${esc(source.title)} to ${esc(target.title)}"><title>${esc(source.title)} → ${esc(target.title)} (dependency)</title></path></g>`;
     }
   }
@@ -371,10 +379,10 @@ function renderEdges() {
 }
 function renderGraph() {
   const shown=new Set(visibleTasks().map(t=>t.id));
-  const related=selected&&!selectedEdge ? dependencyPathIds(project,selected) : new Set();
+  const related=selected&&!selectedEdge ? dependencyPathIds(graphDocument(),selected) : new Set();
   renderStages();
-  $('#nodes').innerHTML=project.tasks.map(t=>{
-    const p=positionOf(t.id),size=taskSize(t),active=selected===t.id&&!selectedEdge,children=childrenOf(project,t.id),collapsed=collapsedBranches.has(t.id)||children.some(c=>!shown.has(c.id));
+  $('#nodes').innerHTML=graphDocument().tasks.map(t=>{
+    const p=positionOf(t.id),size=taskSize(t),active=selected===t.id&&!selectedEdge,children=childrenOf(graphDocument(),t.id),collapsed=collapsedBranches.has(t.id)||children.some(c=>!shown.has(c.id));
     const childLabel=children.length===1?'1 child':`${children.length} children`;
     return `<article class="task-node ${t.parent_id?'child-node':''} ${active?'selected':related.has(t.id)?'related':''}" ${shown.has(t.id)?'':'hidden'} data-id="${esc(t.id)}" data-status="${esc(t.status)}" style="left:${p.x}px;top:${p.y}px;width:${size.width}px;height:${size.height}px" tabindex="0" aria-label="${esc(t.title)}, ${STATUS[t.status].label}${t.parent_id?', child step':''}" aria-roledescription="workflow step">
     <button class="port in" data-port="in" data-id="${esc(t.id)}" aria-label="Input for ${esc(t.title)}" title="Add an incoming dependency"></button>
@@ -382,19 +390,19 @@ function renderGraph() {
     <h3 title="Double-click to rename" class="${t.title==='Untitled step'?'untitled':''}">${esc(t.title||'Untitled step')}</h3>
     <div class="node-meta"><p class="node-goal ${!t.goal?'placeholder':''}">${esc(t.goal || (t.title==='Untitled step'?'Click to name this step':''))}</p></div>
     ${t.outputs.length?`<div class="node-output" title="${esc(`Outputs: ${t.outputs.join(', ')}`)}">${icon('file')}<span>${esc(t.outputs[0])}</span>${t.outputs.length>1?`<span class="output-more">+${t.outputs.length-1}</span>`:''}</div>`:''}
-    <div class="node-hierarchy-controls">${children.length?`<button class="children-toggle ${collapsed?'is-collapsed':''}" data-node-action data-action="toggle-children" data-id="${esc(t.id)}" aria-expanded="${!collapsed}" aria-label="${collapsed?'Show':'Hide'} children of ${esc(t.title)}" title="${collapsed?'Show':'Hide'} ${descendantIds(project,t.id).size} descendant steps">${icon('chevron')}<span>${childLabel}</span></button>`:''}<button class="node-delete" data-node-action data-action="delete-card" data-id="${esc(t.id)}" aria-label="Delete step ${esc(t.title)}" title="Delete step">${icon('trash')}</button><button class="node-add-child" data-node-action data-action="add-child" data-id="${esc(t.id)}" aria-label="Add child step to ${esc(t.title)}" title="Add child step">${icon('plus')}</button></div>
-    <button class="port out" data-port="out" data-id="${esc(t.id)}" aria-label="Output for ${esc(t.title)}" title="Drag to connect. An ungrouped step linked to a child joins its branch."></button></article>`;
+    <div class="node-hierarchy-controls">${children.length?`<button class="children-toggle ${collapsed?'is-collapsed':''}" data-node-action data-action="toggle-children" data-id="${esc(t.id)}" aria-expanded="${!collapsed}" aria-label="${collapsed?'Show':'Hide'} children of ${esc(t.title)}" title="${collapsed?'Show':'Hide'} ${descendantIds(graphDocument(),t.id).size} descendant steps">${icon('chevron')}<span>${childLabel}</span></button>`:''}<button class="node-delete" data-node-action data-action="delete-card" data-id="${esc(t.id)}" aria-label="Delete step ${esc(t.title)}" title="Delete step">${icon('trash')}</button><button class="node-add-child" data-node-action data-action="add-child" data-id="${esc(t.id)}" aria-label="Add operation to ${esc(t.title)}" title="Add operation in Layers">${icon('plus')}</button></div>
+    <button class="port out" data-port="out" data-id="${esc(t.id)}" aria-label="Output for ${esc(t.title)}" title="Drag to connect overview steps."></button></article>`;
   }).join('');
-  renderEdges();applyTransform();updateConnectPrompt();$('#empty-state').hidden=project.tasks.length>0;
+  renderEdges();applyTransform();updateConnectPrompt();$('#empty-state').hidden=graphDocument().tasks.length>0;
 }
 
 function applyTransform() { $('#world').style.transform=`translate(${transform.x}px,${transform.y}px) scale(${transform.zoom})`; $('#zoom-level').textContent=`${Math.round(transform.zoom*100)}%`; renderMinimap(); }
-/** The map always represents the entire project, not the current Focus/collapse. */
+/** The map always represents the entire overview, regardless of Focus/collapse. */
 function renderMinimap() {
   const wrap=$('#minimap-wrap');
-  wrap.hidden=!mapOpen || !project.tasks.length || view!=='graph';
+  wrap.hidden=!mapOpen || !graphDocument().tasks.length || view!=='graph';
   if (wrap.hidden) {miniBounds=null;return;}
-  const tasks=project.tasks, shown=new Set(visibleTasks().map(t=>t.id));
+  const tasks=graphDocument().tasks, shown=new Set(visibleTasks().map(t=>t.id));
   const pos=tasks.map(t=>({...positionOf(t.id),...taskSize(t)}));
   const minX=Math.min(...pos.map(p=>p.x)), minY=Math.min(...pos.map(p=>p.y));
   const w=Math.max(...pos.map(p=>p.x+p.width))-minX, h=Math.max(...pos.map(p=>p.y+p.height))-minY;
@@ -425,7 +433,7 @@ function navigateMinimap(event,taskId=null) {
   const id=taskId || event.target.closest('[data-mini-task]')?.dataset.miniTask;
   let x,y;
   if(id) {
-    const task=project.tasks.find(t=>t.id===id);if(!task)return;
+    const task=graphDocument().tasks.find(t=>t.id===id);if(!task)return;
     const p=positionOf(id),s=taskSize(task);x=p.x+s.width/2;y=p.y+s.height/2;
     if(focusMode&&!focusedIds()?.has(id))focusMode=false;
     revealPath(id);refresh(false);
@@ -484,6 +492,17 @@ function fitGraph() {
   transform.y=top+(c.clientHeight-top-bottom-h*transform.zoom)/2-minY*transform.zoom;
   applyTransform();
 }
+function frameGraphOpening() {
+  if(!matchMedia('(max-width:700px)').matches)return;
+  const tasks=graphDocument().tasks;
+  const task=tasks.find(t=>t.id===(selected||layerSelection.overviewId))||tasks[0];
+  if(!task)return;
+  const p=positionOf(task.id),size=taskSize(task),canvas=$('#canvas');
+  transform.zoom=.95;
+  transform.x=canvas.clientWidth/2-(p.x+size.width/2)*transform.zoom;
+  transform.y=canvas.clientHeight/2-(p.y+size.height/2)*transform.zoom;
+  applyTransform();
+}
 function zoom(factor, x=$('#canvas').clientWidth/2, y=$('#canvas').clientHeight/2) {
   const z=Math.min(2.5,Math.max(.12,transform.zoom*factor)), ratio=z/transform.zoom;
   transform.x=x-(x-transform.x)*ratio; transform.y=y-(y-transform.y)*ratio; transform.zoom=z; applyTransform();
@@ -494,13 +513,14 @@ function dependencyRow(t, source, target) {
 }
 function renderFamily(task) {
   const descendants=descendantIds(project,task.id),kids=childrenOf(project,task.id);
+  const graphKids=childrenOf(graphDocument(),task.id);
   const choices=project.tasks.filter(t=>t.id!==task.id&&!descendants.has(t.id));
   const parent=project.tasks.find(t=>t.id===task.parent_id);
-  return `<section class="inspector-section family-section"><div class="family-heading"><h3>Hierarchy</h3><button class="text-button" data-action="add-child" data-id="${esc(task.id)}">${icon('plus')} Add child</button></div>
+  return `<section class="inspector-section family-section"><div class="family-heading"><h3>Hierarchy</h3><button class="text-button" data-action="add-child" data-id="${esc(task.id)}">${icon('plus')} ${taskLayer(task)==='overview'?'Add operation':'Add child'}</button></div>
   ${!parent?`<label class="field-label">Step number<input id="step-number" type="number" min="1" step="1" value="${stepOutline(project).find(row=>row.task.id===task.id).number}"></label><p class="field-help">Children inherit this number. An existing main-step number swaps with this one.</p>`:''}
   <label class="field-label">Part of<select id="parent-step" aria-label="Parent step"><option value="">No parent · main step</option>${choices.map(t=>`<option value="${esc(t.id)}" ${t.id===task.parent_id?'selected':''}>${esc(t.title)}</option>`).join('')}</select></label>
   ${parent?`<button class="family-parent" data-action="select" data-id="${esc(parent.id)}">${icon('up')} Open ${esc(parent.title)}</button>`:''}
-  ${kids.length?`<div class="family-heading"><span class="connection-group-label">Children</span><button class="text-button" data-action="toggle-children" data-id="${esc(task.id)}">${collapsedBranches.has(task.id)||kids.some(c=>!visibleTasks().some(v=>v.id===c.id))?'Show on canvas':'Collapse branch'}</button></div>${kids.map(t=>`<div class="dependency-row"><span class="status-dot ${esc(t.status)}"></span><button class="dependency-name" data-action="select" data-id="${esc(t.id)}">${esc(t.title)}</button><button class="icon-button" data-action="select" data-id="${esc(t.id)}" aria-label="Open child ${esc(t.title)}">${icon('next')}</button></div>`).join('')}`:''}
+  ${kids.length?`<div class="family-heading"><span class="connection-group-label">Children</span>${view==='graph'&&graphKids.length?`<button class="text-button" data-action="toggle-children" data-id="${esc(task.id)}">${collapsedBranches.has(task.id)?'Show on canvas':'Collapse branch'}</button>`:''}</div>${kids.map(t=>`<div class="dependency-row"><span class="status-dot ${esc(t.status)}"></span><button class="dependency-name" data-action="select" data-id="${esc(t.id)}">${esc(t.title)}</button><button class="icon-button" data-action="select" data-id="${esc(t.id)}" aria-label="Open child ${esc(t.title)}">${icon('next')}</button></div>`).join('')}`:''}
   </section>`;
 }
 
@@ -511,22 +531,25 @@ function renderInspector() {
   const heading=label=>`<div class="inspector-heading"><span class="inspector-heading-label">${label}</span><button class="icon-button" data-action="close-inspector" aria-label="Close details" title="Close details">${icon('close')}</button></div>`;
   if (selectedEdge) {
     const [source,target]=selectedEdge.split('|');
-    const choices=id=>project.tasks.map(t=>`<option value="${esc(t.id)}" ${t.id===id ? 'selected' : ''}>${esc(t.title)}</option>`).join('');
+    const choices=id=>(view==='graph'?graphDocument().tasks:project.tasks).map(t=>`<option value="${esc(t.id)}" ${t.id===id ? 'selected' : ''}>${esc(t.title)}</option>`).join('');
     container.innerHTML=`${heading('Connection')}<div class="inspector-content"><div class="connection-direction">${icon('link')} Dependency</div><p class="connection-summary">The step under <strong>To</strong> depends on the step under <strong>From</strong>.</p><form id="connection-form"><label class="field-label">From<select id="connection-source">${choices(source)}</select></label><label class="field-label">To<select id="connection-target">${choices(target)}</select></label><p id="connection-error" class="inline-error" role="alert"></p><div class="connection-actions"><button class="button primary" type="submit">Update connection</button><button class="button" data-action="reverse-edge" type="button">Reverse</button></div></form></div><div class="inspector-footer"><button class="delete-task" data-action="delete-edge">${icon('trash')} Remove connection</button></div>`;
     return;
   }
   if (!task) { container.innerHTML=''; container.hidden=true; return; }
-  const candidates=project.tasks.filter(t=>t.id!==task.id && !task.depends_on.includes(t.id)).filter(t=>{ try{addDependency(project,t.id,task.id);return true;}catch{return false;} });
+  const hasMethods=taskLayer(task)!=='overview';
+  if(inspectorTab==='methods'&&!hasMethods)inspectorTab='plan';
+  const candidates=(view==='graph'?graphDocument().tasks:project.tasks).filter(t=>t.id!==task.id && !task.depends_on.includes(t.id)).filter(t=>{ try{addDependency(project,t.id,task.id);return true;}catch{return false;} });
   const downstream=project.tasks.filter(t=>t.depends_on.includes(task.id));
-  container.innerHTML=`${heading('Step details')}<div class="inspector-content"><div class="id-line">${task.parent_id?'CHILD STEP':'MAIN STEP'}</div><textarea class="title-input" rows="2" data-field="title" aria-label="Step title" placeholder="Name this step…" maxlength="200">${task.title==='Untitled step'?'':esc(task.title)}</textarea>
-    <div class="inspector-tabs" role="tablist" aria-label="Step information"><button role="tab" id="plan-tab" data-action="inspector-tab" data-tab="plan" aria-selected="${inspectorTab==='plan'}" aria-controls="plan-panel" tabindex="${inspectorTab==='plan'?0:-1}" class="${inspectorTab==='plan'?'active':''}">Plan</button><button role="tab" id="resources-tab" data-action="inspector-tab" data-tab="resources" aria-selected="${inspectorTab==='resources'}" aria-controls="resources-panel" tabindex="${inspectorTab==='resources'?0:-1}" class="${inspectorTab==='resources'?'active':''}">Notes & files</button></div>
+  container.innerHTML=`${heading('Step details')}<div class="inspector-content"><div class="id-line">${view==='layers'?({'overview':'OVERVIEW','operation':'OPERATION','processing':'PROCESSING STEP'}[taskLayer(task)]):task.parent_id?'CHILD STEP':'MAIN STEP'}</div><textarea class="title-input" rows="2" data-field="title" aria-label="Step title" placeholder="Name this step…" maxlength="200">${task.title==='Untitled step'?'':esc(task.title)}</textarea>
+    <div class="inspector-tabs" role="tablist" aria-label="Step information"><button role="tab" id="plan-tab" data-action="inspector-tab" data-tab="plan" aria-selected="${inspectorTab==='plan'}" aria-controls="plan-panel" tabindex="${inspectorTab==='plan'?0:-1}" class="${inspectorTab==='plan'?'active':''}">Plan</button><button role="tab" id="resources-tab" data-action="inspector-tab" data-tab="resources" aria-selected="${inspectorTab==='resources'}" aria-controls="resources-panel" tabindex="${inspectorTab==='resources'?0:-1}" class="${inspectorTab==='resources'?'active':''}">Notes & files</button>${hasMethods?`<button role="tab" id="methods-tab" data-action="inspector-tab" data-tab="methods" aria-selected="${inspectorTab==='methods'}" aria-controls="methods-panel" tabindex="${inspectorTab==='methods'?0:-1}" class="${inspectorTab==='methods'?'active':''}">Methods</button>`:''}</div>
     <div id="plan-panel" role="tabpanel" aria-labelledby="plan-tab" ${inspectorTab!=='plan'?'hidden':''}><label class="field-label">Status<select data-field="status">${statusOptions(task.status)}</select></label><label class="field-label">Goal<textarea rows="3" data-field="goal" placeholder="What should this step achieve?">${esc(task.goal)}</textarea></label>
+    ${layerMetadataFields(task)}
     ${renderFamily(task)}
     <section class="inspector-section"><h3>Dependencies</h3><div class="connection-group-label">Depends on</div>${task.depends_on.map(id=>dependencyRow(project.tasks.find(t=>t.id===id),id,task.id)).join('') || '<p class="no-connections">No incoming connections</p>'}<select class="dependency-add" id="add-dependency" aria-label="Add incoming dependency"><option value="">+ Add connection</option>${candidates.map(t=>`<option value="${esc(t.id)}">${esc(t.title)}</option>`).join('')}</select>
     ${downstream.length ? `<div class="connection-group-label">Required by</div>${downstream.map(t=>dependencyRow(t,task.id,t.id)).join('')}` : ''}
     <button class="connected-add" data-action="add-after">${icon('plus')} Add dependent step</button></section></div>
     <div id="resources-panel" role="tabpanel" aria-labelledby="resources-tab" ${inspectorTab!=='resources'?'hidden':''}><label class="field-label">Notes<textarea rows="6" data-field="notes" placeholder="Decisions, observations, references…">${esc(task.notes)}</textarea></label><label class="field-label">Inputs<textarea rows="3" data-field="inputs" placeholder="One file path or reference per line">${esc(task.inputs.join('\n'))}</textarea></label><label class="field-label">Outputs<textarea rows="3" data-field="outputs" placeholder="One file path or reference per line">${esc(task.outputs.join('\n'))}</textarea></label>
-    ${task.agent_instructions ? `<details><summary>Existing handoff notes</summary><textarea rows="4" data-field="agent_instructions" aria-label="Agent instructions">${esc(task.agent_instructions)}</textarea></details>`:''}</div></div>
+    ${task.agent_instructions ? `<details><summary>Existing handoff notes</summary><textarea rows="4" data-field="agent_instructions" aria-label="Agent instructions">${esc(task.agent_instructions)}</textarea></details>`:''}</div>${hasMethods?`<div id="methods-panel" role="tabpanel" aria-labelledby="methods-tab" ${inspectorTab!=='methods'?'hidden':''}>${renderMethodDetails(task,layerSelection.recordId)}</div>`:''}${view==='layers'?renderLayerPosition(task):''}</div>
     <div class="inspector-footer"><button class="delete-task" data-action="delete-task">${icon('trash')} Delete step</button></div>`;
   $('#inspector .inspector-content').scrollTop=scroll; resizeTitle();
 }
@@ -569,12 +592,225 @@ function renameStep(id) {
 }
 
 function refresh(inspector=true,graph=true) {
+  if(view==='graph')normalizeGraphSelection();
   for(const id of collapsedBranches)if(!project.tasks.some(t=>t.id===id))collapsedBranches.delete(id);
   if(selected)revealPath(selected);
   if(selected && !currentTask()){ selected=null;focusMode=false; }
   if(selectedEdge && !edgeExists(selectedEdge))selectedEdge=null;
   if(!selected && !selectedEdge)$('#inspector').hidden=true;
-  renderHeader();if(graph)renderGraph();else{renderEdges();renderMinimap();}if(inspector)renderInspector();if(view==='list')renderList();
+  renderHeader();if(graph)renderGraph();else{renderEdges();renderMinimap();}if(inspector)renderInspector();if(view==='list')renderList();if(view==='layers')renderLayers();if(ideasOpen)renderIdeas();
+}
+
+function renderLayers() {
+  if(currentTask()&&!selectedEdge)layerSelection={...layerSelection,...layerTaskContext(currentTask())};
+  const current = resolveLayerSelection(project, layerSelection);
+  layerSelection = {...layerSelection, overviewId:current.overviewId, operationId:current.operationId, processingId:current.processingId, recordId:current.recordId, selectedId:selectedEdge?null:selected};
+  const focused = $('#layers-view').contains(document.activeElement) ? document.activeElement.closest('[data-action]') : null;
+  const focusKey = focused ? {action:focused.dataset.action, id:focused.dataset.id, source:focused.dataset.source, target:focused.dataset.target} : null;
+  const focusId = $('#layers-view').contains(document.activeElement) ? document.activeElement.id : null;
+  $('#layers-view').innerHTML = renderLayeredView(layerPointer?.draft || project, layerSelection, !!history.length, !!future.length);
+  if(layerCamera.autoFit)fitLayerCanvas();else applyLayerCamera();
+  if(layerPointer?.type==='node'&&layerPointer.moved)$('#layer-world .flow-node[data-id="'+layerPointer.taskId+'"]')?.classList.add('is-dragging');
+  if(focusKey)[...$('#layers-view').querySelectorAll('[data-action]')].find(el => el.dataset.action === focusKey.action && el.dataset.id === focusKey.id && el.dataset.source === focusKey.source && el.dataset.target === focusKey.target)?.focus({preventScroll:true});
+  else if(focusId)document.getElementById(focusId)?.focus({preventScroll:true});
+}
+function applyLayerCamera() {
+  const world=$('#layer-world');if(!world)return;
+  world.style.transform=`translate(${layerCamera.x}px,${layerCamera.y}px) scale(${layerCamera.zoom})`;
+  if($('#layer-zoom-level'))$('#layer-zoom-level').textContent=`${Math.round(layerCamera.zoom*100)}%`;
+}
+function fitLayerCanvas(fitAll = layerCamera.fitAll || false) {
+  const viewport=$('#layer-canvas'),world=$('#layer-world');
+  if(!viewport?.clientWidth||!viewport.clientHeight||!world)return;
+  const w=Number(world.dataset.boundsWidth)||world.offsetWidth,h=Number(world.dataset.boundsHeight)||world.offsetHeight;
+  const minX=Number(world.dataset.boundsX)||0,minY=Number(world.dataset.boundsY)||0;
+  const fitZoom=Math.min(1,Math.max(.000001,Math.min((viewport.clientWidth-40)/w,(viewport.clientHeight-36)/h)));
+  const readableMobile=!fitAll&&matchMedia('(max-width:700px)').matches;
+  const z=readableMobile?Math.max(.85,fitZoom):fitZoom;
+  const anchorId=selected||layerSelection.operationId||layerSelection.overviewId;
+  const anchor=readableMobile?[...world.querySelectorAll('.flow-node')].find(node=>node.dataset.id===anchorId):null;
+  const x=anchor?viewport.clientWidth/2-(anchor.offsetLeft+anchor.offsetWidth/2)*z:(viewport.clientWidth-w*z)/2-minX*z;
+  const y=anchor?viewport.clientHeight/2-(anchor.offsetTop+anchor.offsetHeight/2)*z:(viewport.clientHeight-h*z)/2-minY*z;
+  layerCamera={x,y,zoom:z,autoFit:true,fitAll};
+  applyLayerCamera();
+}
+function zoomLayerCanvas(factor,x,y) {
+  const viewport=$('#layer-canvas');if(!viewport)return;
+  x??=viewport.clientWidth/2;y??=viewport.clientHeight/2;
+  const z=Math.min(2,Math.max(.000001,layerCamera.zoom*factor)),ratio=z/layerCamera.zoom;
+  layerCamera={x:x-(x-layerCamera.x)*ratio,y:y-(y-layerCamera.y)*ratio,zoom:z,autoFit:false};
+  applyLayerCamera();
+}
+
+function layerPositionsSnapshot() {
+  return Object.fromEntries(computeLayerCanvas(project,layerSelection).nodes.map(node=>[node.id,{x:node.x,y:node.y}]));
+}
+function layerPositionDraft(base, positions, id, x, y) {
+  const doc=clone(base);
+  doc.layout.layer_positions={...doc.layout.layer_positions};
+  for(const [taskId,position] of Object.entries(positions))doc.layout.layer_positions[taskId]={...doc.layout.layer_positions[taskId],...position};
+  const bounded=value=>Math.max(-10000000,Math.min(10000000,value));
+  doc.layout.layer_positions[id]={...doc.layout.layer_positions[id],x:bounded(x),y:bounded(y)};
+  return doc;
+}
+function moveLayerNode(id,x,y,group='') {
+  if(!Number.isFinite(x)||!Number.isFinite(y))return;
+  const positions=layerPositionsSnapshot();if(!positions[id])return;
+  layerCamera.autoFit=false;
+  change(()=>layerPositionDraft(project,positions,id,x,y),{validate:true,group});
+}
+function arrangeLayerCanvas() {
+  const ids=Object.keys(layerPositionsSnapshot());
+  change(doc=>{for(const id of ids)if(doc.layout.layer_positions)delete doc.layout.layer_positions[id];
+    if(doc.layout.layer_positions&&!Object.keys(doc.layout.layer_positions).length)delete doc.layout.layer_positions;
+  },{validate:true});
+  fitLayerCanvas(true);
+}
+function renderLayerPosition(task) {
+  const node=computeLayerCanvas(project,{...layerSelection,...layerTaskContext(task)}).nodes.find(node=>node.id===task.id);
+  if(!node)return '';
+  return `<details class="layer-position-editor"><summary>Canvas position</summary><div class="layer-position-fields"><label class="field-label">X<input type="number" step="any" min="-10000000" max="10000000" name="canvas_x" autocomplete="off" data-layer-coordinate="x" value="${node.x}" aria-label="Canvas X position"></label><label class="field-label">Y<input type="number" step="any" min="-10000000" max="10000000" name="canvas_y" autocomplete="off" data-layer-coordinate="y" value="${node.y}" aria-label="Canvas Y position"></label></div><p class="field-help">Drag a card, or focus it and use arrow keys. Hold Shift for larger moves.</p></details>`;
+}
+
+function renderIdeas() {
+  const body=$('#ideas-body'),focused=body.contains(document.activeElement)?document.activeElement:null;
+  const key=focused?{id:focused.id,action:focused.dataset.action,item:focused.dataset.id}:null;
+  const scroll=$('#ideas-content')?.scrollTop || 0;
+  body.innerHTML=renderIdeasList(project,ideasFilter,expandedIdeaId);
+  $('#ideas-content').scrollTop=scroll;
+  const target=key?.id?document.getElementById(key.id):key?.action?[...body.querySelectorAll('[data-action]')].find(el=>el.dataset.action===key.action&&el.dataset.id===key.item):null;
+  if(key)(target||body.querySelector('[data-action="idea-add"]'))?.focus({preventScroll:true});
+}
+function openIdeas() {
+  ideasOpen=true;layerCamera.autoFit=false;
+  $('#inspector').hidden=true;
+  renderIdeas();renderHeader();
+  $('#ideas-heading').focus({preventScroll:true});
+}
+function closeIdeas(restoreFocus=true) {
+  ideasOpen=false;renderHeader();
+  if(restoreFocus)$('#ideas-button').focus({preventScroll:true});
+}
+
+function openIdeaDialog(id = null) {
+  const item=(project.ideas||[]).find(idea=>idea.id===id);
+  if(id&&!item)return;
+  editingIdeaId=id;
+  const form=$('#idea-form');form.reset();
+  form.elements.related_task_id.innerHTML='<option value="">Project-wide</option>'+stepOutline(project).map(({task,number})=>`<option value="${esc(task.id)}">${esc(number)} · ${esc(task.title)}</option>`).join('');
+  if(item)for(const key of ['title','kind','status','notes','revisit_when','resolution','related_task_id'])form.elements[key].value=item[key]||'';
+  $('#idea-dialog-heading').textContent=item?'Edit idea or question':'Capture for later';
+  $('#idea-submit').textContent=item?'Save changes':'Add item';
+  $('#idea-error').textContent='';$('#idea-dialog').showModal();
+  form.elements.title.focus();
+}
+function submitIdea(event) {
+  event.preventDefault();const form=event.target;if(!form.reportValidity())return;
+  const fields=new FormData(form), item={};
+  for(const key of ['title','kind','status','notes','revisit_when','resolution'])item[key]=String(fields.get(key)||'').trim();
+  const related=String(fields.get('related_task_id')||'');
+  const now=new Date().toISOString();
+  try {
+    let next;
+    if(editingIdeaId){
+      const existing=(project.ideas||[]).find(idea=>idea.id===editingIdeaId);
+      if(!existing)throw Error('This item is no longer in the project.');
+      item.related_task_id=related||null;item.updated_at=now;
+      if(item.status==='resolved'&&existing.status!=='resolved')item.resolved_at=now;
+      next=updateIdea(project,editingIdeaId,item);
+    }else{
+      item.id=`idea_${crypto.randomUUID().replaceAll('-','')}`;item.created_at=now;
+      if(related)item.related_task_id=related;
+      if(item.status==='resolved')item.resolved_at=now;
+      next=addIdea(project,item);
+    }
+    const id=editingIdeaId||item.id;
+    ideasOpen=true;ideasFilter=item.status==='resolved'?'resolved':'active';expandedIdeaId=id;
+    if(change(()=>next,{validate:true})){
+      $('#idea-dialog').close();renderIdeas();renderHeader();
+      const savedRow=[...$('#ideas-body').querySelectorAll('[data-action="idea-toggle"]')].find(el=>el.dataset.id===id);
+      savedRow?.focus({preventScroll:true});
+      savedRow?.scrollIntoView({block:'nearest'});
+      toast('Saved to Ideas & questions.');
+    }
+  }catch(error){$('#idea-error').textContent=error.message;}
+}
+function confirmIdeaRemoval(id) {
+  const item=(project.ideas||[]).find(idea=>idea.id===id);if(!item)return;
+  deletingIdeaId=id;$('#delete-idea-title').textContent=item.title;$('#delete-idea-dialog').showModal();
+}
+function openIdeaLink(id) {
+  const item=(project.ideas||[]).find(idea=>idea.id===id);
+  if(!item?.related_task_id)return;
+  closeIdeas(false);navigateTo(item.related_task_id);
+  $('#inspector .title-input')?.focus({preventScroll:true});
+}
+function layerTaskContext(task) {
+  const kind=taskLayer(task);
+  let overviewId=task.id,operationId=null,processingId=null;
+  if(kind!=='overview'){
+    const operation=kind==='processing'?project.tasks.find(t=>taskLayer(t)==='operation'&&processingStepsFor(project,t.id).some(p=>p.id===task.id)):task;
+    operationId=operation?.id||null;processingId=kind==='processing'?task.id:null;
+    overviewId=overviewSteps(project).find(t=>operationsFor(project,t.id).some(op=>op.id===operationId))?.id||':unassigned';
+  }
+  return {overviewId,operationId,processingId};
+}
+function layerSelectTask(id, tab = null) {
+  const task=project.tasks.find(t=>t.id===id);if(!task)return;
+  const kind=taskLayer(task), {overviewId,operationId,processingId}=layerTaskContext(task);
+  if(layerSelection.overviewId!==overviewId)layerCamera.autoFit=true;
+  layerSelection={overviewId,operationId,processingId,selectedId:id};
+  selected=id;selectedEdge=null;inspectorTab=tab||(kind==='overview'?'plan':'methods');showInspector();refresh();
+}
+function layerSelectOverview(id) {
+  if(id===':unassigned'){layerSelection={overviewId:id};selected=null;selectedEdge=null;layerCamera.autoFit=true;closeInspector();refresh();return;}
+  layerSelectTask(id);
+}
+function layerSelectOperation(id) {layerSelectTask(id);}
+function layerEdit(id) {
+  if(!project.tasks.some(t=>t.id===id))return;
+  selected=id;selectedEdge=null;inspectorTab='plan';showInspector();refresh();
+}
+function addLayerStep(layer, dependency = null) {
+  let newId;
+  const ok=change(doc=>{
+    const result=insertBlankStep(doc,{x:0,y:0},dependency); newId=result.id;
+    const task=result.document.tasks.find(t=>t.id===newId);task.layer=layer;
+    if(layer==='operation' && overviewSteps(doc).some(t=>t.id===layerSelection.overviewId))task.overview_id=layerSelection.overviewId;
+    if(layer==='processing' && doc.tasks.some(t=>t.id===layerSelection.operationId&&taskLayer(t)==='operation'))task.operation_id=layerSelection.operationId;
+    return validateProject(result.document);
+  },{validate:true});
+  if(!ok)return;
+  layerCamera.autoFit=true;
+  layerSelectTask(newId,'plan');$('#inspector .title-input')?.focus();
+}
+function layerMetadataFields(task) {
+  const kind=taskLayer(task), stages=overviewSteps(project).filter(t=>t.id!==task.id);
+  const operations=project.tasks.filter(t=>taskLayer(t)==='operation'&&t.id!==task.id);
+  const membership=kind==='operation'?`<label class="field-label">Overview step<select data-layer-field="overview_id"><option value="">Use hierarchy / unassigned</option>${stages.map(t=>`<option value="${esc(t.id)}" ${task.overview_id===t.id?'selected':''}>${esc(t.title)}</option>`).join('')}</select></label>`:kind==='processing'?`<label class="field-label">Operation<select data-layer-field="operation_id"><option value="">Use hierarchy / unassigned</option>${operations.map(t=>`<option value="${esc(t.id)}" ${task.operation_id===t.id?'selected':''}>${esc(t.title)}</option>`).join('')}</select></label>`:'';
+  return `<section class="inspector-section layer-fields"><h3>Workflow layer</h3><label class="field-label">Layer<select data-layer-field="layer">${[['overview','1 · Overview'],['operation','2 · Operation'],['processing','3 · Processing']].map(([value,label])=>`<option value="${value}" ${kind===value?'selected':''}>${label}</option>`).join('')}</select></label>${membership}${kind!=='overview'?`<label class="field-label">Operation type<input data-field="operation_type" list="operation-types" value="${esc(task.operation_type||'')}" placeholder="Analysis, literature, download…"></label><label class="field-label">Planned method<textarea rows="3" data-field="method" placeholder="How will this step be performed?">${esc(task.method||'')}</textarea></label><label class="field-label">Parameters / criteria<textarea rows="3" data-field="parameters" placeholder="Settings, search query, inclusion rules…">${esc(task.parameters||'')}</textarea></label><label class="field-label">Rationale<textarea rows="3" data-field="rationale" placeholder="Why this approach?">${esc(task.rationale||'')}</textarea></label><button class="text-button" data-action="layer-show-methods" data-id="${esc(task.id)}">View methods & records →</button>`:''}</section>`;
+}
+function methodTask() {return currentTask()&&taskLayer(currentTask())!=='overview'?currentTask():project.tasks.find(t=>t.id===(layerSelection.processingId||layerSelection.operationId));}
+
+function openRecordDialog() {
+  const task=methodTask();if(!task)return;
+  recordingTaskId=task.id;
+  const form=$('#record-work-form');form.reset();
+  $('#record-operation-title').textContent=task.title;
+  for(const key of ['method','parameters','rationale','inputs','outputs'])form.elements[key].value=Array.isArray(task[key])?task[key].join('\n'):task[key]||'';
+  $('#record-error').textContent='';$('#record-work-dialog').showModal();
+}
+function submitWorkRecord(event) {
+  event.preventDefault();const form=event.target;
+  if(!form.reportValidity())return;
+  const fields=new FormData(form), record={id:`record_${crypto.randomUUID().replaceAll('-','')}`,recorded_at:new Date().toISOString()};
+  for(const field of ['method','parameters','rationale','changes','code','software','notes','status'])record[field]=String(fields.get(field)||'').trim();
+  const performed=String(fields.get('performed_at')||'');if(performed)record.performed_at=new Date(performed).toISOString();
+  for(const field of ['inputs','outputs'])record[field]=String(fields.get(field)||'').split('\n').map(s=>s.trim()).filter(Boolean);
+  try {
+    const next=addOperationRecord(project,recordingTaskId,record);
+    if(change(()=>next,{validate:true})){layerSelection.recordId=record.id;$('#record-work-dialog').close();refresh();toast('Work recorded. Task progress is unchanged.');}
+  } catch(error) {$('#record-error').textContent=error.message;}
 }
 function removeEdge(source,target) {
   selectedEdge=null;
@@ -587,7 +823,7 @@ function editEdge(source,target) {
     if(source!==oldSource || target!==oldTarget) {
       if(next.tasks.find(t=>t.id===target)?.depends_on.includes(source))throw Error('That connection already exists.');
       next.tasks.find(t=>t.id===oldTarget).depends_on=next.tasks.find(t=>t.id===oldTarget).depends_on.filter(d=>d!==oldSource);
-      const result=addBranchDependency(next,source,target);
+      const result=(view==='graph'?addDependency:addBranchDependency)(next,source,target);
       selectedEdge=`${source}|${target}`;
       const oldProject=project;
       if(!change(()=>result,{validate:true}))selectedEdge=before;
@@ -606,7 +842,7 @@ function announceParentChanges(before,after) {
 }
 function connect(source,target) {
   try {
-    const before=project, next=addBranchDependency(project,source,target);connectFrom=null;
+    const before=project, next=(view==='graph'?addDependency:addBranchDependency)(project,source,target);connectFrom=null;
     if(change(()=>next,{validate:true}))announceParentChanges(before,next);
   } catch(error) { toast(error.message,true);connectFrom=null;updateConnectPrompt(); }
 }
@@ -617,41 +853,17 @@ function updateConnectPrompt() {
   $$('.task-node').forEach(el=>el.classList.toggle('connect-source',el.dataset.id===connectFrom));
 }
 function selectEdge(key) { if(!edgeExists(key))return;key.split('|').forEach(revealPath);selectedEdge=key;connectFrom=null;showInspector();refresh(); }
-/** Collision-aware placement uses each node's actual size, never a visual scale. */
-function freeStepPosition(preferred,size={width:NODE_W,height:NODE_H},nearParent=false) {
-  const c=$('#canvas'),gap=26,dx=size.width+gap,dy=size.height+gap;
-  const free=p=>project.tasks.every(t=>{const q=project.layout.positions[t.id],s=taskSize(t);return !q||p.x+size.width+gap<=q.x||q.x+s.width+gap<=p.x||p.y+size.height+gap<=q.y||q.y+s.height+gap<=p.y;});
-  const onScreen=p=>{const x=p.x*transform.zoom+transform.x,y=p.y*transform.zoom+transform.y;return x>=20&&x+size.width*transform.zoom<=c.clientWidth-20&&y>=85&&y+size.height*transform.zoom<=c.clientHeight-75;};
-  let fallback=null;
-  for(let ring=0;ring<=32;ring++) {
-    const offsets=[];
-    for(let row=-ring;row<=ring;row++)for(let col=-ring;col<=ring;col++)if(Math.max(Math.abs(row),Math.abs(col))===ring)offsets.push({col,row});
-    offsets.sort((a,b)=>(a.col*dx)**2+(a.row*dy)**2-((b.col*dx)**2+(b.row*dy)**2)||b.row-a.row);
-    for(const {col,row} of offsets) {
-      if(nearParent&&row<0)continue;
-      const p={x:Math.round(preferred.x+col*dx),y:Math.round(preferred.y+row*dy)};
-      if(free(p)){if(nearParent||onScreen(p))return p;fallback??=p;}
-    }
-    if(ring>=4&&fallback)return fallback;
-  }
-  throw Error('No open position found. Pan to another part of the canvas and try again.');
-}
-function addBlankStep(dependency=null,at=null,parent=null) {
+function addBlankStep(dependency=null,parent=null) {
   if(['loading','error'].includes(mode))return;
   try {
     if(project.tasks.length>=500)throw Error('A workflow can contain at most 500 steps.');
     if(dependency&&!project.tasks.some(t=>t.id===dependency))throw Error('Dependency not found.');
     if(parent&&!project.tasks.some(t=>t.id===parent))throw Error('Parent not found.');
-    const explicitChild=!!parent;
     parent ??= dependency ? project.tasks.find(t=>t.id===dependency)?.parent_id ?? null : null;
-    const c=$('#canvas'),wasList=view==='list',size=taskSize({parent_id:parent});
     closeInspector();
-    if(wasList){$('#canvas').hidden=false;$('#list-view').hidden=true;view='graph';}
-    let preferred=at?{x:at.x-size.width/2,y:at.y-size.height/2}:null;
-    if(explicitChild){const q=project.layout.positions[parent],ps=taskSize(project.tasks.find(t=>t.id===parent));preferred={x:q.x+(ps.width-size.width)/2,y:q.y+ps.height+86};}
-    if(!preferred&&dependency){const q=project.layout.positions[dependency],ps=taskSize(project.tasks.find(t=>t.id===dependency));preferred={x:q.x+ps.width+90,y:q.y};}
-    if(!preferred){const b=c.getBoundingClientRect(),q=pointInWorld(b.left+b.width/2,b.top+b.height/2);preferred={x:q.x-size.width/2,y:q.y-size.height/2};}
-    const result=insertBlankStep(project,freeStepPosition(preferred,size,explicitChild),dependency,parent);
+    // Graph placement is derived from numbering; stored legacy coordinates are inert.
+    const result=insertBlankStep(project,{x:0,y:0},dependency,parent);
+    result.document.tasks.find(t=>t.id===result.id).layer='overview';
     if(change(()=>result.document,{validate:true})) {
       selected=result.id;selectedEdge=null;connectFrom=null;inspectorTab='plan';revealPath(result.id);
       if(!dependency&&!parent)focusMode=false;
@@ -684,7 +896,7 @@ function confirmDeleteStep() {
     if(selected===id)selected=null;
     if(!selected)closeInspector();
     $('#delete-step-dialog').close();pendingDeletion=null;
-    refresh();$('#canvas').focus({preventScroll:true});
+    refresh();(view==='layers'?$('#layer-canvas'):$('#canvas'))?.focus({preventScroll:true});
     toast(`“${task.title}” deleted. Undo restores it.`);
     $('#edit-announcement').textContent='Step deleted. Undo restores the step and its connections.';
   }catch(error){$('#delete-step-error').textContent=error.message;}
@@ -721,7 +933,7 @@ async function save() {
     if(conflict){toast('The file changed. Keep a draft copy, then reload this project.',true);return;}
     if(!dirty()&&!previewWarning)return;
     busy=true;renderHeader();
-    const data=await request('/api/project',{method:'PUT',body:JSON.stringify({document:snapshot,revision,preview_layout:layoutMode})});
+    const data=await request('/api/project',{method:'PUT',body:JSON.stringify({document:snapshot,revision,preview_layout:'stages'})});
     revision=data.revision;baseline=JSON.stringify(snapshot);filePath=data.file;serverError=false;previewWarning=data.preview_warning||null;alertFile('');
     if(previewWarning)toast(previewWarning,true);
   } catch(error) {if(error.status===409)alertFile(error.message,true);toast(error.message||'Save failed. Your draft is unchanged.',true);}
@@ -736,11 +948,11 @@ async function loadDisk() {
   } catch(error){toast(error.message,true);}
 }
 async function checkExternal() {
-  if(!['server','error'].includes(mode)||busy||pollBusy||pointer||miniPointer||document.hidden||$('dialog[open]'))return;
+  if(!['server','error'].includes(mode)||busy||pollBusy||pointer||miniPointer||layerPointer||document.hidden||$('dialog[open]'))return;
   pollBusy=true;
   try {
     const data=await request('/api/project');
-    if($('dialog[open]')||pointer||miniPointer)return;
+    if($('dialog[open]')||pointer||miniPointer||layerPointer)return;
     if(data.revision!==revision) {
       if(dirty()&&mode==='server')alertFile('This project was edited elsewhere. Your unsaved changes are still here.',true);
       else {
@@ -752,26 +964,67 @@ async function checkExternal() {
   } catch(error){if(!serverError)alertFile(`Cannot read this project: ${error.message}. Your draft is unchanged.`,conflict);serverError=true;}
   finally{pollBusy=false;}
 }
-function switchView(which) {view=which;$('#canvas').hidden=view!=='graph';$('#list-view').hidden=view!=='list';if(view==='list')focusMode=false;refresh(false);}
-function setLayoutMode(which) {
-  if(!['stages','freeform'].includes(which)||which===layoutMode)return;
-  layoutMode=which;lastGroup='';connectFrom=null;refresh(false);fitGraph();
+function normalizeGraphSelection() {
+    const task=currentTask();
+    if(task&&taskLayer(task)!=='overview') {
+      const owner=layerTaskContext(task).overviewId;
+      selected=graphDocument().tasks.some(t=>t.id===owner)?owner:null;
+      if(!selected)focusMode=false;
+      inspectorTab='plan';
+    }
+    if(selectedEdge&&!selectedEdge.split('|').every(id=>graphDocument().tasks.some(t=>t.id===id)))selectedEdge=null;
+    if(connectFrom&&!graphDocument().tasks.some(t=>t.id===connectFrom))connectFrom=null;
 }
+function switchView(which) {
+  if(which==='graph')normalizeGraphSelection();
+  view=which;$('#canvas').hidden=view!=='graph';$('#list-view').hidden=view!=='list';$('#layers-view').hidden=view!=='layers';$('.canvas-column').classList.toggle('show-layers',view==='layers');if(view!=='graph')focusMode=false;refresh(false);}
 const actions={
-  overview:()=>{focusMode=false;connectFrom=null;selectedEdge=null;switchView('graph');if(!selected)closeInspector();else renderInspector();fitGraph();},
+  overview:()=>{focusMode=false;connectFrom=null;selectedEdge=null;switchView('graph');if(!selected)closeInspector();else renderInspector();fitGraph();frameGraphOpening();},
   focus:()=>{if(!currentTask())return;selectedEdge=null;focusMode=!focusMode;switchView('graph');renderInspector();fitGraph();},
-  'toggle-inspector':()=>{if(!currentTask()&&!selectedEdge)return;$('#inspector').hidden=!$('#inspector').hidden;refresh();keepSelectedVisible();},
+  'toggle-inspector':()=>{if(!currentTask()&&!selectedEdge)return;if($('#inspector').hidden)showInspector();else closeInspector();refresh();keepSelectedVisible();},
   'close-inspector':closeInspector,
-  'inspector-tab':el=>{inspectorTab=el.dataset.tab;renderInspector();$(`#${inspectorTab==='plan'?'plan':'resources'}-tab`).focus();},
+  'inspector-tab':el=>{inspectorTab=el.dataset.tab;renderInspector();$(`#${inspectorTab}-tab`).focus();},
   select:el=>navigateTo(el.dataset.id),
-  'add-child':el=>addBlankStep(null,null,el.dataset.id||selected),
+  'add-child':el=>{
+    const task=project.tasks.find(t=>t.id===(el.dataset.id||selected));if(!task)return;
+    selected=task.id;selectedEdge=null;
+    layerSelection={...layerSelection,...layerTaskContext(task)};
+    switchView('layers');addLayerStep(taskLayer(task)==='overview'?'operation':'processing');
+  },
   'toggle-children':el=>toggleBranch(el.dataset.id||selected),
   save, reload:loadDisk,
-  add:()=>addBlankStep(), 'add-after':()=>addBlankStep(selected),
+  add:()=>view==='layers'?addLayerStep('overview'):addBlankStep(), 'add-after':()=>{if(currentTask()&&(view==='layers'||taskLayer(currentTask())!=='overview')){layerSelection={...layerSelection,...layerTaskContext(currentTask())};switchView('layers');addLayerStep(taskLayer(currentTask()),selected);}else addBlankStep(selected);},
+  'view-layers':()=>{closeInspector();switchView('layers');},
+  'ideas-open':openIdeas,
+  'ideas-toggle':()=>ideasOpen?closeIdeas():openIdeas(),
+  'ideas-close':()=>closeIdeas(),
+  'idea-toggle':el=>{
+    const id=el.dataset.id;expandedIdeaId=expandedIdeaId===id?null:id;renderIdeas();
+    const summary=[...$('#ideas-body').querySelectorAll('[data-action="idea-toggle"]')].find(button=>button.dataset.id===id);
+    summary?.focus({preventScroll:true});summary?.scrollIntoView({block:'nearest'});
+  },
+  'idea-add':()=>openIdeaDialog(),
+  'idea-edit':el=>openIdeaDialog(el.dataset.id),
+  'idea-delete':el=>confirmIdeaRemoval(el.dataset.id),
+  'idea-link':el=>openIdeaLink(el.dataset.id),
+  'layer-overview':el=>layerSelectOverview(el.dataset.id),
+  'layer-operation':el=>layerSelectOperation(el.dataset.id),
+  'layer-processing':el=>layerSelectTask(el.dataset.id),
+  'layer-edge':el=>{selectedEdge=`${el.dataset.source}|${el.dataset.target}`;showInspector();refresh();},
+  'layer-arrange':arrangeLayerCanvas,
+  'layer-fit':()=>fitLayerCanvas(true), 'layer-zoom-in':()=>zoomLayerCanvas(1.15), 'layer-zoom-out':()=>zoomLayerCanvas(1/1.15), 'layer-zoom-reset':()=>zoomLayerCanvas(1/layerCamera.zoom),
+  'layer-edit-overview':()=>layerEdit(layerSelection.overviewId),
+  'layer-edit-operation':()=>layerEdit(layerSelection.operationId),
+  'layer-add-overview':()=>addLayerStep('overview'),
+  'layer-add-operation':()=>addLayerStep('operation'),
+  'layer-add-processing':()=>addLayerStep('processing'),
+  'layer-record':openRecordDialog,
+  'layer-record-select':el=>{layerSelection.recordId=el.dataset.id;renderInspector();[...$('#inspector').querySelectorAll('[data-action="layer-record-select"]')].find(button=>button.dataset.id===el.dataset.id)?.focus({preventScroll:true});},
+  'layer-use-record':el=>change(doc=>selectOperationRecord(doc,el.dataset.taskId||methodTask()?.id,el.dataset.id||layerSelection.recordId),{validate:true}),
+  'layer-show-methods':el=>{layerSelectTask(el.dataset.id,'methods');},
   'view-list':()=>switchView('list'),
-  'set-layout':el=>setLayoutMode(el.dataset.layout),
   'toggle-map':()=>{mapOpen=!mapOpen;renderHeader();renderMinimap();},
-  layout:()=>{if(layoutMode==='stages'){refresh(false);fitGraph();}else if(change(doc=>autoLayout(validateProject(doc)),{validate:true}))fitGraph();},
+  layout:()=>{refresh(false);fitGraph();},
   fit:fitGraph,'zoom-in':()=>zoom(1.15),'zoom-out':()=>zoom(1/1.15),'zoom-reset':()=>zoom(1/transform.zoom),undo,redo,
   'remove-dependency':el=>removeEdge(el.dataset.source,el.dataset.target),
   'delete-edge':()=>{if(selectedEdge)removeEdge(...selectedEdge.split('|'));},
@@ -785,6 +1038,7 @@ const actions={
   help:()=>{$('#help-mode').textContent=mode==='server'?'Save writes to this project’s YAML file and backs up the previous version. Changes from your text editor are detected automatically.':'Changes live in this browser tab. Save copy downloads an editable HTML with your current work; reopen that copy to continue. YAML and JSON backups are available under More.';$('#help-dialog').showModal();},
 };
 document.addEventListener('click',event=>{
+  if(event.detail!==0&&performance.now()<layerClickSuppressedUntil&&event.target.closest('#layer-canvas')){event.preventDefault();return;}
   const el=event.target.closest('[data-action]');
   if(el && !el.disabled){event.preventDefault();const act=actions[el.dataset.action];if(act)Promise.resolve(act(el)).catch(e=>toast(e.message,true));}
   if(!event.target.closest('.more-menu')||el)$('#more-menu').open=false;
@@ -807,15 +1061,100 @@ $('#inspector').addEventListener('input',e=>{
   if(field==='title')resizeTitle();
 });
 $('#inspector').addEventListener('change',e=>{if(e.target.id==='add-dependency'&&e.target.value)connect(e.target.value,selected);if(e.target.id==='parent-step')reparent(selected,e.target.value||null);if(e.target.id==='step-number'){change(doc=>setStepNumber(doc,selected,Number(e.target.value)),{validate:true});renderInspector();}});
-$('#inspector').addEventListener('submit',e=>{if(e.target.id==='connection-form'){e.preventDefault();editEdge($('#connection-source').value,$('#connection-target').value);}});
-$('#inspector').addEventListener('keydown',e=>{if(e.target.matches('[role="tab"]')&&['ArrowLeft','ArrowRight'].includes(e.key)){e.preventDefault();inspectorTab=inspectorTab==='plan'?'resources':'plan';renderInspector();$(`#${inspectorTab==='plan'?'plan':'resources'}-tab`).focus();}});
-$('#list-view').addEventListener('change',e=>{if(e.target.dataset.tableStatus)change(doc=>{doc.tasks.find(t=>t.id===e.target.dataset.tableStatus).status=e.target.value;});});
-$('#layout-control').addEventListener('keydown',e=>{
-  if(!e.target.matches('[data-layout]')||!['ArrowLeft','ArrowRight','Home','End'].includes(e.key))return;
-  e.preventDefault();
-  const which=['ArrowLeft','Home'].includes(e.key)?'stages':'freeform';
-  setLayoutMode(which);$(`#layout-${which}`).focus();
+$('#inspector').addEventListener('change',e=>{
+  const field=e.target.dataset.layerField;if(!field||!currentTask())return;
+  const value=e.target.value, editedId=selected;
+  change(doc=>{
+    const task=doc.tasks.find(t=>t.id===editedId);
+    if(field==='layer'){
+      task.layer=value;
+      if(value!=='operation')delete task.overview_id;
+      if(value!=='processing')delete task.operation_id;
+    }else if(value)task[field]=value;else delete task[field];
+    return validateProject(doc);
+  },{validate:true});
+  const editedTask=project.tasks.find(t=>t.id===editedId);
+  if(editedTask&&(view==='layers'||(view==='graph'&&taskLayer(editedTask)!=='overview'))){switchView('layers');layerSelectTask(editedId,'plan');}else renderInspector();
 });
+$('#inspector').addEventListener('change',event=>{
+  const axis=event.target.dataset.layerCoordinate;if(!axis||!currentTask())return;
+  const value=event.target.valueAsNumber;if(!Number.isFinite(value)||!event.target.checkValidity()){renderInspector();return;}
+  const position=layerPositionsSnapshot()[selected];if(!position)return;
+  moveLayerNode(selected,axis==='x'?value:position.x,axis==='y'?value:position.y);
+  $('#inspector .layer-position-editor').open=true;
+});
+$('#record-work-form').addEventListener('submit',submitWorkRecord);
+$('#record-work-dialog').addEventListener('close',()=>{recordingTaskId=null;});
+$('#idea-form').addEventListener('submit',submitIdea);
+$('#idea-dialog').addEventListener('close',()=>{editingIdeaId=null;});
+$('#delete-idea-form').addEventListener('submit',event=>{
+  event.preventDefault();const id=deletingIdeaId;
+  if(id&&change(doc=>removeIdea(doc,id),{validate:true})){
+    $('#delete-idea-dialog').close();$('#ideas-body [data-action="idea-add"]')?.focus({preventScroll:true});
+  }
+});
+$('#delete-idea-dialog').addEventListener('close',()=>{deletingIdeaId=null;});
+$('#ideas-body').addEventListener('change',event=>{
+  if(event.target.id==='ideas-filter'){ideasFilter=event.target.value;renderIdeas();}
+});
+$('#layers-view').addEventListener('pointerdown',event=>{
+  const viewport=event.target.closest('#layer-canvas'),node=event.target.closest('.flow-node');
+  if(!viewport||event.button!==0||event.isPrimary===false||layerPointer)return;
+  if(!node&&event.target.closest('button,a,input,select,[data-action]'))return;
+  layerClickSuppressedUntil=0;
+  if(document.activeElement?.matches('input,textarea,select'))document.activeElement.blur();
+  layerPointer={id:event.pointerId,type:node?'node':'pan',taskId:node?.dataset.id,
+    x:event.clientX,y:event.clientY,camera:{...layerCamera},moved:false,
+    positions:node?layerPositionsSnapshot():null,before:project,draft:null};
+  $('#layers-view').setPointerCapture(event.pointerId);event.preventDefault();
+  if(node)$$('.flow-node').find(card=>card.dataset.id===node.dataset.id)?.focus({preventScroll:true});else viewport.classList.add('is-panning');
+});
+$('#layers-view').addEventListener('pointermove',event=>{
+  if(!layerPointer||event.pointerId!==layerPointer.id)return;
+  const drag=layerPointer,dx=event.clientX-drag.x,dy=event.clientY-drag.y;
+  if(Math.hypot(dx,dy)>5)drag.moved=true;
+  if(!drag.moved)return;
+  layerCamera.autoFit=false;
+  if(drag.type==='node'){
+    const origin=drag.positions[drag.taskId];
+    drag.draft=layerPositionDraft(drag.before,drag.positions,drag.taskId,origin.x+Math.round(dx/drag.camera.zoom),origin.y+Math.round(dy/drag.camera.zoom));
+    renderLayers();
+  }else{
+    layerCamera.x=drag.camera.x+dx;layerCamera.y=drag.camera.y+dy;applyLayerCamera();
+  }
+});
+function finishLayerPointer(event,cancelled=false) {
+  if(!layerPointer||event.pointerId!==layerPointer.id)return;
+  const drag=layerPointer;layerPointer=null;
+  layerClickSuppressedUntil=performance.now()+350;
+  const host=$('#layers-view');if(host.hasPointerCapture(event.pointerId))host.releasePointerCapture(event.pointerId);
+  if(cancelled){layerCamera=drag.camera;renderLayers();return;}
+  if(drag.type==='node'){
+    if(drag.moved&&drag.draft){
+      change(()=>drag.draft,{validate:true,inspector:false});
+      if(!$('#inspector').hidden)renderInspector();
+      $('#edit-announcement').textContent='Card moved. Undo restores its position.';
+    }else layerSelectTask(drag.taskId);
+  }
+  $('#layer-canvas')?.classList.remove('is-panning');
+}
+$('#layers-view').addEventListener('pointerup',event=>finishLayerPointer(event));
+for(const type of ['pointercancel','lostpointercapture'])$('#layers-view').addEventListener(type,event=>finishLayerPointer(event,true));
+$('#layers-view').addEventListener('wheel',event=>{
+  const viewport=event.target.closest('#layer-canvas');if(!viewport)return;
+  event.preventDefault();if(layerPointer)return;
+  if(event.ctrlKey||event.metaKey){const r=viewport.getBoundingClientRect();zoomLayerCanvas(Math.exp(-event.deltaY*.006),event.clientX-r.left,event.clientY-r.top);}
+  else{layerCamera.x-=event.deltaX;layerCamera.y-=event.deltaY;layerCamera.autoFit=false;applyLayerCamera();}
+},{passive:false});
+$('#layers-view').addEventListener('focusin',event=>{
+  const node=event.target.closest('.flow-node'),viewport=$('#layer-canvas');if(!node||!viewport||layerPointer)return;
+  const n=node.getBoundingClientRect(),v=viewport.getBoundingClientRect();
+  if(n.left<v.left||n.right>v.right||n.top<v.top||n.bottom>v.bottom){layerCamera.x+=v.left+v.width/2-(n.left+n.width/2);layerCamera.y+=v.top+v.height/2-(n.top+n.height/2);layerCamera.autoFit=false;applyLayerCamera();}
+});
+new ResizeObserver(()=>{if(view==='layers'&&layerCamera.autoFit)fitLayerCanvas();}).observe($('#layers-view'));
+$('#inspector').addEventListener('submit',e=>{if(e.target.id==='connection-form'){e.preventDefault();editEdge($('#connection-source').value,$('#connection-target').value);}});
+$('#inspector').addEventListener('keydown',e=>{if(e.target.matches('[role="tab"]')&&['ArrowLeft','ArrowRight'].includes(e.key)){e.preventDefault();const tabs=[...$('#inspector').querySelectorAll('[role="tab"]')].map(el=>el.dataset.tab);inspectorTab=tabs[(tabs.indexOf(inspectorTab)+(e.key==='ArrowRight'?1:tabs.length-1))%tabs.length];renderInspector();$(`#${inspectorTab}-tab`).focus();}});
+$('#list-view').addEventListener('change',e=>{if(e.target.dataset.tableStatus)change(doc=>{doc.tasks.find(t=>t.id===e.target.dataset.tableStatus).status=e.target.value;});});
 const canvas=$('#canvas');
 // Keep navigation controls fixed when keyboard focus reaches off-screen cards.
 canvas.addEventListener('focusin',event=>{const node=event.target.closest('.task-node');if(node&&!pointer)keepSelectedVisible(node.dataset.id);});
@@ -833,7 +1172,7 @@ canvas.addEventListener('pointerdown',event=>{
   } else if(connectFrom&&node){connect(connectFrom,node.dataset.id);event.preventDefault();return;}
   else if(port?.dataset.port==='in'){event.preventDefault();return;}
   else if(edge){selectEdge(edge.dataset.edge);event.preventDefault();return;}
-  else if(node){const p=positionOf(node.dataset.id);pointer={type:'node',id:node.dataset.id,x:p.x,y:p.y,clientX:event.clientX,clientY:event.clientY,before:clone(project),layoutMode,moved:false};}
+  else if(node){pointer={type:'node',id:node.dataset.id,clientX:event.clientX,clientY:event.clientY,moved:false};}
   else{pointer={type:'pan',x:transform.x,y:transform.y,clientX:event.clientX,clientY:event.clientY,moved:false};canvas.classList.add('panning');}
   if(lastNodeClick && performance.now()-lastNodeClick.time<500 && Math.hypot(event.clientX-lastNodeClick.x,event.clientY-lastNodeClick.y)<8 && ['node','pan'].includes(pointer.type))pointer.renameId=lastNodeClick.id;
   canvas.setPointerCapture(event.pointerId);event.preventDefault();
@@ -843,13 +1182,8 @@ canvas.addEventListener('pointermove',event=>{
   const dx=event.clientX-pointer.clientX,dy=event.clientY-pointer.clientY;
   if(Math.abs(dx)+Math.abs(dy)>3)pointer.moved=true;
   if(pointer.type==='pan'){transform.x=pointer.x+dx;transform.y=pointer.y+dy;applyTransform();}
-  if(pointer.type==='node'&&pointer.moved){
-    if(!pointer.moveBase){pointer.moveBase=startFreeformMove(clone(pointer.before));renderStages();renderHeader();}
-    project=moveBranch(pointer.moveBase,pointer.id,dx/transform.zoom,dy/transform.zoom);
-    for(const id of [pointer.id,...descendantIds(project,pointer.id)]){const p=positionOf(id),el=$(`.task-node[data-id="${id}"]`);if(el){el.style.left=`${p.x}px`;el.style.top=`${p.y}px`;el.classList.add('dragging');}}renderEdges();renderMinimap();
-  }
   if(pointer.type==='connect'&&pointer.moved){
-    const p=positionOf(pointer.id),{width:NODE_W,height:NODE_H}=taskSize(project.tasks.find(t=>t.id===pointer.id)),end=pointInWorld(event.clientX,event.clientY);renderEdges();
+    const p=positionOf(pointer.id),{width:NODE_W,height:NODE_H}=taskSize(graphDocument().tasks.find(t=>t.id===pointer.id)),end=pointInWorld(event.clientX,event.clientY);renderEdges();
     $('#edges').insertAdjacentHTML('beforeend',`<path class="edge-preview" d="M ${p.x+NODE_W} ${p.y+NODE_H/2} C ${p.x+300} ${p.y+NODE_H/2}, ${end.x-60} ${end.y}, ${end.x} ${end.y}"/>`);
     const target=document.elementFromPoint(event.clientX,event.clientY)?.closest('.task-node');$$('.task-node').forEach(n=>n.classList.toggle('connect-target',n===target && n.dataset.id!==pointer.id));
   }
@@ -865,8 +1199,7 @@ function finishPointer(event,cancelled=false){
     // A click leaves a keyboard/touch-friendly pending connection.
   }
   if(action.type==='node'){
-    if(action.moved){if(cancelled){project=action.before;layoutMode=action.layoutMode;}else remember(action.before,'',action.layoutMode);}
-    else if(!cancelled){lastNodeClick={id:action.id,x:event.clientX,y:event.clientY,time:performance.now()};navigateTo(action.id);}
+    if(!action.moved&&!cancelled){lastNodeClick={id:action.id,x:event.clientX,y:event.clientY,time:performance.now()};navigateTo(action.id);}
   }
   if(action.type==='pan'&&!action.moved&&!cancelled){connectFrom=null;selectedEdge=null;if(!focusMode)selected=null;closeInspector();}
   refresh(false);
@@ -878,7 +1211,7 @@ canvas.addEventListener('dblclick',event=>{
   const recent=lastNodeClick && performance.now()-lastNodeClick.time<600 && Math.hypot(event.clientX-lastNodeClick.x,event.clientY-lastNodeClick.y)<8;
   const id=event.target.closest('.task-node')?.dataset.id || (recent?lastNodeClick.id:null);
   lastNodeClick=null;
-  if(id)renameStep(id);else addBlankStep(null,pointInWorld(event.clientX,event.clientY));
+  if(id)renameStep(id);else addBlankStep();
 });
 canvas.addEventListener('wheel',e=>{if(controlTarget(e.target))return;e.preventDefault();const r=canvas.getBoundingClientRect();if(e.shiftKey){transform.x-=e.deltaY;transform.y-=e.deltaX;applyTransform();}else zoom(Math.exp(-e.deltaY*.0015),e.clientX-r.left,e.clientY-r.top);},{passive:false});
 $('#minimap-wrap').addEventListener('pointerdown',startMinimapDrag);
@@ -891,26 +1224,35 @@ $('#delete-step-dialog').addEventListener('close',()=>{if(!$('#delete-step-dialo
 
 document.addEventListener('keydown',e=>{
   const editing=e.target.matches('input,textarea,select')||e.target.isContentEditable;
+  if(layerPointer){e.preventDefault();if(e.key==='Escape'){finishLayerPointer({pointerId:layerPointer.id},true);}return;}
   if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='s'){e.preventDefault();if($('dialog[open]'))return;document.activeElement?.blur();save();return;}
   if($('dialog[open]'))return;
+  if(e.key==='Escape'&&ideasOpen&&$('#ideas-panel').contains(e.target)){e.preventDefault();closeIdeas();return;}
   if(editing)return;
-  if(e.key==='Escape'){if($('#more-menu').open){$('#more-menu').open=false;return;}if(connectFrom){actions['cancel-connect']();return;}clearSelection();return;}
+  if(e.key==='Escape'){if($('#more-menu').open){$('#more-menu').open=false;return;}if(ideasOpen){e.preventDefault();closeIdeas();return;}if(connectFrom){actions['cancel-connect']();return;}clearSelection();return;}
   if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='z'){e.preventDefault();e.shiftKey?redo():undo();return;}
   if(e.ctrlKey||e.metaKey||e.altKey)return;
-  if(e.key.toLowerCase()==='f'){e.preventDefault();e.shiftKey?actions.focus():fitGraph();}
+  if(ideasOpen&&$('#ideas-panel').contains(e.target))return;
+  if(e.key.toLowerCase()==='f'){e.preventDefault();e.shiftKey?actions.focus():view==='layers'?fitLayerCanvas(true):fitGraph();}
   if(e.key.toLowerCase()==='o'){e.preventDefault();actions.overview();}
-  if(e.key.toLowerCase()==='n'){e.preventDefault();addBlankStep();}
+  if(e.key.toLowerCase()==='n'){e.preventDefault();actions.add();}
   if(e.key==='?'){e.preventDefault();actions.help();}
   if(['Delete','Backspace'].includes(e.key)&&selectedEdge){e.preventDefault();actions['delete-edge']();}
-  else if(['Delete','Backspace'].includes(e.key)&&e.target.matches('.task-node')){e.preventDefault();requestDeleteStep(e.target.dataset.id);}
+  else if(['Delete','Backspace'].includes(e.key)&&e.target.matches('.task-node,.flow-node')){e.preventDefault();requestDeleteStep(e.target.dataset.id);}
   if(['Enter',' '].includes(e.key)&&e.target.matches('.task-node')){e.preventDefault();navigateTo(e.target.dataset.id);$('#inspector .title-input')?.focus();}
   if(['Enter',' '].includes(e.key)&&e.target.matches('[data-hierarchy]')){e.preventDefault();navigateTo(e.target.dataset.hierarchy);}
   if(['Enter',' '].includes(e.key)&&e.target.matches('[data-bundle]')){e.preventDefault();revealBundle(e.target.dataset.bundle);}
   if(['Enter',' '].includes(e.key)&&e.target.matches('[data-edge]')){e.preventDefault();selectEdge(e.target.dataset.edge);$('#connection-source')?.focus();}
+  if(['Enter',' '].includes(e.key)&&e.target.matches('.layer-dependency-hit')){e.preventDefault();actions['layer-edge'](e.target);$('#connection-source')?.focus();}
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)&&e.target.matches('.flow-node')){
+    e.preventDefault();const id=e.target.dataset.id,position=layerPositionsSnapshot()[id],amount=e.shiftKey?40:10;
+    if(position)moveLayerNode(id,position.x+(e.key==='ArrowRight'?amount:e.key==='ArrowLeft'?-amount:0),position.y+(e.key==='ArrowDown'?amount:e.key==='ArrowUp'?-amount:0),`layer-move-${id}`);
+    $$('.flow-node').find(node=>node.dataset.id===id)?.focus({preventScroll:true});
+  }
   if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)&&e.target.matches('.task-node')){
-    e.preventDefault();const id=e.target.dataset.id,amount=e.shiftKey?40:10;
-    change(doc=>moveBranch(startFreeformMove(doc),id,e.key==='ArrowRight'?amount:e.key==='ArrowLeft'?-amount:0,e.key==='ArrowDown'?amount:e.key==='ArrowUp'?-amount:0),{group:`move-${id}`,inspector:false});
-    $$('.task-node').find(n=>n.dataset.id===id)?.focus();
+    e.preventDefault();const nodes=$$('.task-node:not([hidden])'),index=nodes.indexOf(e.target);
+    const next=nodes[Math.max(0,Math.min(nodes.length-1,index+(['ArrowRight','ArrowDown'].includes(e.key)?1:-1)))];
+    next?.focus({preventScroll:true});if(next)keepSelectedVisible(next.dataset.id);
   }
 });
 window.addEventListener('beforeunload',e=>{if(dirty()){e.preventDefault();e.returnValue='';}});
@@ -925,9 +1267,13 @@ async function init(){
       const data=await request('/api/project');project=ensurePositions(validateProject(data.document));baseline=JSON.stringify(project);revision=data.revision;filePath=data.file;mode='server';
     }catch(error){mode='error';alertFile(error.status===401 ? error.message : `Cannot open this project: ${error.message}. Check the server and SSH tunnel, then reload.`);}
   }
-  selected=null;selectedEdge=null;closeInspector();refresh();fitGraph();
-  if(matchMedia('(max-width:700px)').matches&&project.tasks.length){const p=positionOf(project.tasks[0].id);transform.zoom=.95;transform.x=canvas.clientWidth/2-(p.x+NODE_W/2)*transform.zoom;transform.y=canvas.clientHeight/2-(p.y+NODE_H/2)*transform.zoom;applyTransform();}
+  selected=null;selectedEdge=null;closeInspector();switchView(project.project.presentation==='layers'?'layers':'graph');refresh();fitGraph();
+  frameGraphOpening();
   logoMotion.play('load');
   setInterval(checkExternal,3500);
 }
 init();
+
+matchMedia('(max-width:700px)').addEventListener('change',()=>{
+  $('.canvas-column').inert=ideasOpen&&matchMedia('(max-width:700px)').matches;
+});

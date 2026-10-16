@@ -28,12 +28,15 @@ def build(project_path=None, output=None):
     model = re.sub(r'^export\s+', '', model, flags=re.M)
     connection = (ROOT / 'web/connection.mjs').read_text(encoding='utf-8')
     connection = re.sub(r'^export\s+', '', connection, flags=re.M)
+    layers = (ROOT / 'web/layers.mjs').read_text(encoding='utf-8')
+    layers = re.sub(r'^import\s+.*?;\s*', '', layers, flags=re.M | re.S)
+    layers = re.sub(r'^export\s+', '', layers, flags=re.M)
     app = (ROOT / 'web/app.js').read_text(encoding='utf-8')
     app = re.sub(r'^import\s+.*?;\s*', '', app, flags=re.M | re.S)
     css = (ROOT / 'web/styles.css').read_text(encoding='utf-8')
     preview = re.sub(r'<link\b[^>]*href="styles\.css"[^>]*>',
                      lambda m: f'<style>{css}</style>', template)
-    code = 'window.RESEARCH_FLOW_PREVIEW = true;\n' + model + '\n' + connection + '\n' + app
+    code = 'window.RESEARCH_FLOW_PREVIEW = true;\n' + model + '\n' + connection + '\n' + layers + '\n' + app
     preview = re.sub(r'<script\b[^>]*src="app\.js"[^>]*></script>',
                      lambda m: '<script type="module">\n' + code.replace('</script', '<\\/script') + '\n</script>', preview)
     output.parent.mkdir(parents=True, exist_ok=True)

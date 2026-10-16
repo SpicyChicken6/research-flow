@@ -1,0 +1,349 @@
+schema_version: 1
+project:
+  id: three-layer-example
+  name: From evidence to insight
+  description: >-
+    Illustrative project · explore decisions, operations and method history.
+    All data and records are fictional; no analysis was run.
+  presentation: layers
+ideas:
+  - id: batch-question
+    kind: question
+    status: open
+    title: Could batch effects influence the comparison?
+    notes: Inspect the sample-level plots before choosing an adjustment strategy. Fictional example.
+    related_task_id: qc
+    revisit_when: After reviewing count quality
+    created_at: '2026-10-16T14:00:00Z'
+  - id: external-cohort
+    kind: idea
+    status: deferred
+    title: Validate the findings in another cohort
+    notes: Keep a possible independent dataset in mind once the initial analysis is ready. Fictional example.
+    revisit_when: After the first results review
+    created_at: '2026-10-16T14:05:00Z'
+  - id: normalization-decision
+    kind: decision
+    status: deferred
+    title: Which exploratory transformation should we retain?
+    notes: Compare the two recorded alternatives and document the reason for the final choice. Fictional example.
+    related_task_id: normalization
+    revisit_when: At the methods review
+    created_at: '2026-10-16T14:10:00Z'
+tasks:
+  - id: question
+    title: Define question
+    layer: overview
+    status: done
+    goal: Agree on the biological question and the evidence needed to answer it.
+    depends_on: []
+    inputs: []
+    outputs: [notes/study-plan.md]
+    rationale: Keep the intended comparison visible throughout implementation.
+    notes: Fictional stage and completion state for the interface demonstration.
+  - id: evidence
+    title: Gather evidence
+    layer: overview
+    status: done
+    goal: Assemble the literature and source data that support the study design.
+    depends_on: [question]
+    inputs: [notes/study-plan.md]
+    outputs: [notes/evidence-map.md, data/raw/counts.tsv, data/raw/samples.tsv]
+    notes: Fictional stage and completion state for the interface demonstration.
+  - id: preparation
+    title: Prepare data
+    layer: overview
+    status: in_progress
+    goal: Establish a traceable input for the planned analysis.
+    depends_on: [evidence]
+    inputs: [data/raw/counts.tsv, data/raw/samples.tsv]
+    outputs: [data/processed/log-cpm-v2.tsv, reports/preparation-review.md]
+    rationale: Review normalization choices and their effect before accepting an analysis input.
+    notes: Fictional stage; illustrative normalization runs still need a review decision.
+  - id: analysis
+    title: Analyze
+    layer: overview
+    status: todo
+    goal: Estimate the planned comparison and check sensitivity to analysis choices.
+    depends_on: [preparation]
+    inputs: [data/processed/filtered-counts.tsv, data/processed/samples.tsv]
+    outputs: [results/comparison.tsv, reports/analysis.md]
+    notes: Fictional planned stage. No analysis was executed.
+  - id: communication
+    title: Communicate
+    layer: overview
+    status: todo
+    goal: Explain the findings with methods and evidence that can be traced.
+    depends_on: [analysis]
+    inputs: [results/comparison.tsv, reports/analysis.md]
+    outputs: [manuscript/draft.md]
+    notes: Fictional planned stage. No findings or manuscript exist.
+
+  - id: study-plan
+    title: Set study criteria
+    layer: operation
+    overview_id: question
+    operation_type: study_design
+    status: done
+    goal: Document the comparison, inclusion criteria and intended checks.
+    depends_on: []
+    inputs: [notes/research-question.md]
+    outputs: [notes/study-plan.md]
+    method: Record a study plan and its unresolved assumptions.
+    rationale: Make later choices interpretable against the original question.
+    notes: Fictional operation and completion state; the referenced document is illustrative.
+  - id: literature
+    title: Review literature
+    layer: operation
+    overview_id: evidence
+    operation_type: literature_review
+    status: done
+    goal: Summarize relevant evidence and record the search strategy.
+    depends_on: []
+    inputs: [notes/study-plan.md]
+    outputs: [notes/evidence-map.md]
+    method: Search a literature database, screen abstracts, and record inclusion reasons.
+    parameters: 'Example query: "illustrative condition" AND "RNA sequencing"; screening scope: abstracts.'
+    selected_record_id: literature-example
+    records:
+      - id: literature-example
+        recorded_at: '2026-10-14T14:00:00Z'
+        performed_at: '2026-10-14T13:00:00Z'
+        status: completed
+        method: Illustrative literature search and manual screening.
+        parameters: 'Database: example literature index; query: "illustrative condition" AND "RNA sequencing".'
+        inputs: [notes/study-plan.md]
+        outputs: [notes/evidence-map.md]
+        changes: 'Illustrative counts: 18 search results, 6 retained; inclusion reasons added to the evidence map.'
+        code: Not applicable; example manual review.
+        software: Example literature index; version not recorded.
+        notes: Fictional record only. No database was searched and no papers were screened.
+    notes: Fictional completed operation. Search wording and result counts demonstrate record fields only.
+  - id: download
+    title: Download dataset
+    layer: operation
+    overview_id: evidence
+    operation_type: data_acquisition
+    status: done
+    goal: Preserve source identifiers and the exact files retrieved.
+    depends_on: [literature]
+    inputs: [notes/evidence-map.md]
+    outputs: [data/raw/counts.tsv, data/raw/samples.tsv, data/raw/manifest.tsv]
+    method: Retrieve count and sample tables, then record their source and checksums.
+    parameters: 'Dataset ID: DEMO-RNA-001 (fictional); files: counts.tsv and samples.tsv.'
+    selected_record_id: download-example
+    records:
+      - id: download-example
+        recorded_at: '2026-10-14T16:00:00Z'
+        performed_at: '2026-10-14T15:30:00Z'
+        status: completed
+        method: Illustrative file retrieval and manifest creation.
+        parameters: 'Source: fictional dataset DEMO-RNA-001; preserve raw files.'
+        inputs: [notes/evidence-map.md]
+        outputs: [data/raw/counts.tsv, data/raw/samples.tsv, data/raw/manifest.tsv]
+        changes: 'Illustrative inventory: 12 sample columns and 24,000 feature rows; raw source files preserved.'
+        code: scripts/download.py (illustrative path; no script was run).
+        software: Example downloader; version not recorded.
+        notes: Fictional record. No files were downloaded; checksums are intentionally absent because no files exist.
+    notes: Fictional operation and files. The dataset identifier does not refer to a real study.
+
+  - id: metadata
+    title: Check sample labels
+    layer: operation
+    overview_id: preparation
+    operation_type: quality_control
+    status: done
+    goal: Confirm that sample identifiers and intended groups are consistent.
+    depends_on: []
+    inputs: [data/raw/counts.tsv, data/raw/samples.tsv]
+    outputs: [data/processed/samples.tsv, reports/sample-checks.md]
+    method: Match sample identifiers, inspect missing fields, and retain an explicit change log.
+    parameters: 'Required fields: sample_id, group, batch; identifier matching: exact.'
+    notes: Fictional completed operation. Example check rules are not a study-specific recommendation.
+  - id: qc
+    title: Inspect count quality
+    layer: operation
+    overview_id: preparation
+    operation_type: quality_control
+    status: done
+    goal: Review library sizes, sparsity and sample-level patterns before filtering.
+    depends_on: [metadata]
+    inputs: [data/raw/counts.tsv, data/processed/samples.tsv]
+    outputs: [reports/count-quality.html]
+    method: Summarize counts and inspect exploratory plots.
+    parameters: 'Summaries: library size and zero fraction; decision: retain all 12 illustrative samples.'
+    notes: Fictional completed operation; no quality assessment was performed.
+  - id: filtering
+    title: Filter low counts
+    layer: operation
+    overview_id: preparation
+    operation_type: data_processing
+    status: done
+    goal: Record which features were retained and the exact filtering rule.
+    depends_on: [qc]
+    inputs: [data/raw/counts.tsv]
+    outputs: [data/processed/filtered-counts.tsv, reports/removed-features.tsv]
+    method: Retain features meeting a stated minimum-count rule.
+    parameters: 'Illustrative rule: count >= 10 in at least 3 samples.'
+    selected_record_id: filter-example
+    records:
+      - id: filter-example
+        recorded_at: '2026-10-15T10:00:00Z'
+        performed_at: '2026-10-15T09:45:00Z'
+        status: completed
+        method: Apply an illustrative feature filter and record excluded identifiers.
+        parameters: 'min_count: 10; min_samples: 3; missing_value_policy: error.'
+        inputs: [data/raw/counts.tsv]
+        outputs: [data/processed/filtered-counts.tsv, reports/removed-features.tsv]
+        changes: 'Illustrative dimensions: 24,000 × 12 → 16,800 × 12; 7,200 feature rows excluded; retained counts unchanged.'
+        code: scripts/filter_counts.py at demo-filter-v1 (fictional revision).
+        software: Illustrative Python environment; version not recorded.
+        notes: Fictional record and counts. This filter is an example configuration, not a recommended threshold.
+    notes: Fictional completed operation; the example filtering rule has not been scientifically validated.
+  - id: normalization
+    title: Normalize for exploration
+    layer: operation
+    overview_id: preparation
+    operation_type: data_processing
+    status: in_progress
+    goal: Compare two illustrative transformations and document the chosen exploratory view.
+    depends_on: [filtering]
+    inputs: [data/processed/filtered-counts.tsv]
+    outputs: [data/processed/log-cpm-v2.tsv, reports/normalization-review.md]
+    method: Scale each sample by its retained-count library total, then apply log2(CPM + pseudocount).
+    parameters: 'Illustrative current settings: scale: 1000000; pseudocount: 1; library_total: retained features.'
+    rationale: Select the second example for inspection; record the effect of the pseudocount before accepting the preparation stage.
+    selected_record_id: normalization-v2
+    records:
+      - id: normalization-v1
+        rationale: Compare a first exploratory view while preserving the original counts and recording every setting.
+        recorded_at: '2026-10-15T11:00:00Z'
+        performed_at: '2026-10-15T10:30:00Z'
+        status: completed
+        method: 'CPM = count / retained-count library total × 1,000,000; transform = log2(CPM + 0.5).'
+        parameters: 'scale: 1000000; pseudocount: 0.5; library_total: retained features; zero_library_policy: error.'
+        inputs: [data/processed/filtered-counts.tsv]
+        outputs: [data/processed/log-cpm-v1.tsv]
+        changes: 'Illustrative dimensions unchanged: 16,800 × 12. Integer counts become log-scale values; zero counts map to -1. Raw and filtered counts are preserved.'
+        code: scripts/explore_counts.py at demo-normalize-v1 (fictional revision).
+        software: Illustrative Python environment; version not recorded.
+        notes: Fictional run only. Parameters illustrate provenance fields, not a recommendation or validated analytical choice.
+      - id: normalization-v2
+        rationale: Compare the effect of changing the pseudocount. Keep both versions for review before accepting the preparation stage.
+        recorded_at: '2026-10-15T14:00:00Z'
+        performed_at: '2026-10-15T13:30:00Z'
+        status: completed
+        method: 'CPM = count / retained-count library total × 1,000,000; transform = log2(CPM + 1).'
+        parameters: 'scale: 1000000; pseudocount: 1; library_total: retained features; zero_library_policy: error.'
+        inputs: [data/processed/filtered-counts.tsv]
+        outputs: [data/processed/log-cpm-v2.tsv]
+        changes: 'Illustrative dimensions unchanged: 16,800 × 12. Pseudocount changes from 0.5 to 1; zero counts now map to 0. Both output versions are retained.'
+        code: scripts/explore_counts.py at demo-normalize-v1 (fictional revision).
+        software: Illustrative Python environment; version not recorded.
+        notes: Fictional run selected for display. Method review is still pending; this is not evidence that any code executed or output checks passed.
+    notes: Fictional operation. The selected run is an exploratory transformation, not an approved input for every downstream method. Completion and method acceptance are separate decisions.
+
+  - id: filter-rule
+    title: Apply count filter
+    layer: processing
+    operation_id: filtering
+    status: todo
+    goal: Preserve the retained counts and record every excluded feature identifier.
+    depends_on: []
+    inputs: [data/raw/counts.tsv]
+    outputs: [data/processed/filtered-counts.tsv, reports/removed-features.tsv]
+    method: Keep a feature when its count is at least 10 in at least 3 sample columns; retain original sample order and retained count values.
+    parameters: |
+      min_count: 10
+      min_samples: 3
+      comparison: count >= min_count
+      missing_value_policy: error
+      negative_count_policy: error
+      preserve_feature_order: true
+    rationale: Make the illustrative filtering rule and excluded feature list individually inspectable.
+    notes: Fictional planned processing node. No filtering was performed by adding this node; the pre-existing operation history is retained separately. Settings demonstrate provenance, not recommended thresholds.
+  - id: scale-cpm
+    title: Scale to CPM
+    layer: processing
+    operation_id: normalization
+    status: todo
+    goal: Create a scaled matrix and retain the library totals used for each sample.
+    depends_on: []
+    inputs: [data/processed/filtered-counts.tsv]
+    outputs: [data/processed/cpm.tsv, data/processed/retained-library-totals.tsv]
+    method: For each sample, divide each retained feature count by that sample's sum of retained feature counts, then multiply by 1000000.
+    parameters: |
+      scale: 1000000
+      library_total: sum of retained feature counts per sample
+      zero_library_policy: error
+      missing_value_policy: error
+      negative_count_policy: error
+    rationale: Expose the chosen library-size denominator before the subsequent log transformation.
+    notes: Fictional planned processing node. Inputs and outputs are illustrative paths; no values were transformed and no files were created.
+  - id: log-transform
+    title: Log-transform CPM
+    layer: processing
+    operation_id: normalization
+    status: todo
+    goal: Create the exploratory log-scale matrix while preserving the CPM input.
+    depends_on: [scale-cpm]
+    inputs: [data/processed/cpm.tsv]
+    outputs: [data/processed/log-cpm-v2.tsv]
+    method: Apply log2(CPM + 1) independently to each matrix value, keeping feature and sample identifiers unchanged.
+    parameters: |
+      logarithm_base: 2
+      pseudocount: 1
+      input_scale: counts per million
+      missing_value_policy: error
+      negative_value_policy: error
+    rationale: Keep the pseudocount choice visible as a separate transformation that can be reviewed or changed.
+    notes: Fictional planned processing node. The scale-to-log dependency describes intended order; no execution record is implied. Existing normalization alternatives remain operation history.
+
+  - id: analysis-code
+    title: Develop analysis code
+    layer: operation
+    overview_id: analysis
+    operation_type: software_development
+    status: todo
+    goal: Implement the planned comparison with documented inputs and checks.
+    depends_on: []
+    inputs: [notes/study-plan.md, data/processed/filtered-counts.tsv, data/processed/samples.tsv]
+    outputs: [scripts/analyze.R, tests/test-analysis.R]
+    method: Write a versioned analysis script and check the sample-to-design mapping.
+    notes: Fictional planned operation. Statistical method and implementation remain to be selected.
+  - id: comparison
+    title: Estimate comparison
+    layer: operation
+    overview_id: analysis
+    operation_type: statistical_analysis
+    status: todo
+    goal: Estimate the prespecified effect and record uncertainty and model checks.
+    depends_on: [analysis-code]
+    inputs: [scripts/analyze.R, data/processed/filtered-counts.tsv, data/processed/samples.tsv]
+    outputs: [results/comparison.tsv, reports/analysis.md]
+    method: To be specified after design and input review.
+    notes: Fictional planned operation. Inputs will be chosen to match the selected statistical method.
+  - id: methods
+    title: Assemble methods
+    layer: operation
+    overview_id: communication
+    operation_type: writing
+    status: todo
+    goal: Turn the accepted operation records into a complete methods description.
+    depends_on: []
+    inputs: [reports/preparation-review.md, reports/analysis.md]
+    outputs: [manuscript/methods.md]
+    method: Review recorded methods, parameters and versions against supporting files.
+    notes: Fictional planned operation. Missing provenance must remain explicit in the draft.
+  - id: manuscript
+    title: Draft findings
+    layer: operation
+    overview_id: communication
+    operation_type: writing
+    status: todo
+    goal: Connect the results to the study question and supporting literature.
+    depends_on: [methods]
+    inputs: [manuscript/methods.md, notes/evidence-map.md, results/comparison.tsv]
+    outputs: [manuscript/draft.md]
+    method: Write a supported narrative and link every figure and claim to its evidence.
+    notes: Fictional planned operation. No scientific claims or findings are supplied by this demo.

@@ -74,7 +74,7 @@ def run(executable):
                     status, data = response.status, response.read()
                     conn.close()
                     return status, data
-                for asset in ('/', '/app.js', '/model.mjs', '/connection.mjs', '/styles.css',
+                for asset in ('/', '/app.js', '/model.mjs', '/connection.mjs', '/layers.mjs', '/styles.css',
                               '/assets/research-flow-icon-light.svg', '/assets/research-flow-icon-dark.svg'):
                     status, data = request('GET', asset)
                     assert status == 200 and data, asset

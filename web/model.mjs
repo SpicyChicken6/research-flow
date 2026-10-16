@@ -6,7 +6,104 @@ export const STATUS = {
   done: { label: 'Done', color: '#0a7abf' },
 };
 export const MAX_SUBSTEPS = 200;
+export const MAX_OPERATION_RECORDS = 200;
+export const RECORD_STATUSES = ['recorded', 'completed', 'failed', 'partial'];
+export const MAX_IDEAS = 500;
+export const IDEA_KINDS = ['idea', 'question', 'decision'];
+export const IDEA_STATUSES = ['open', 'deferred', 'resolved'];
 export const clone = (value) => JSON.parse(JSON.stringify(value));
+
+/** Layers are a view of research intent, independent of dependencies and hierarchy. */
+export const taskLayer = task => task.layer ?? (task.parent_id ? 'operation' : 'overview');
+export const overviewSteps = project => project.tasks.filter(task => taskLayer(task) === 'overview');
+
+/** Presentation-only graph projection. Keep the full document for edits/saves. */
+export function overviewGraph(project) {
+  const tasks = overviewSteps(project), ids = new Set(tasks.map(task => task.id));
+  return {...project, tasks: tasks.map(task => {
+    const depends_on = task.depends_on.filter(id => ids.has(id));
+    const hiddenParent = task.parent_id != null && !ids.has(task.parent_id);
+    if (depends_on.length === task.depends_on.length && !hiddenParent) return task;
+    const visible = {...task, depends_on: depends_on.length === task.depends_on.length ? task.depends_on : depends_on};
+    if (hiddenParent) delete visible.parent_id;
+    return visible;
+  })};
+}
+
+function ancestorLayerId(project, task, layer, byId = new Map(project.tasks.map(entry => [entry.id, entry]))) {
+  const seen = new Set([task.id]);
+  let parent = byId.get(task.parent_id);
+  while (parent && !seen.has(parent.id)) {
+    if (taskLayer(parent) === layer) return parent.id;
+    seen.add(parent.id);
+    parent = byId.get(parent.parent_id);
+  }
+  return null;
+}
+
+/** Explicit associations win; otherwise use the nearest overview in the hierarchy. */
+export function operationsFor(project, overviewId) {
+  const byId = new Map(project.tasks.map(task => [task.id, task]));
+  return project.tasks.filter(task => taskLayer(task) === 'operation' &&
+    (task.overview_id ?? ancestorLayerId(project, task, 'overview', byId)) === overviewId);
+}
+
+/** Processing membership does not imply an execution dependency. */
+export function processingStepsFor(project, operationId) {
+  const byId = new Map(project.tasks.map(task => [task.id, task]));
+  return project.tasks.filter(task => taskLayer(task) === 'processing' &&
+    (task.operation_id ?? ancestorLayerId(project, task, 'operation', byId)) === operationId);
+}
+
+function validateOperationFields(task) {
+  if (Object.hasOwn(task, 'layer') && !['overview', 'operation', 'processing'].includes(task.layer)) throw Error(`Invalid layer for ${task.id}.`);
+  for (const field of ['overview_id', 'operation_id', 'operation_type', 'method', 'parameters', 'rationale']) {
+    if (Object.hasOwn(task, field) && typeof task[field] !== 'string') throw Error(`${task.id}.${field} must be text.`);
+  }
+  if (Object.hasOwn(task, 'records')) {
+    if (!Array.isArray(task.records) || task.records.length > MAX_OPERATION_RECORDS) throw Error(`${task.id}.records must be a list with at most ${MAX_OPERATION_RECORDS} entries.`);
+    const ids = new Set();
+    for (const record of task.records) {
+      if (!record || typeof record !== 'object' || Array.isArray(record) ||
+          typeof record.id !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(record.id)) throw Error(`Invalid record ID on ${task.id}.`);
+      if (ids.has(record.id)) throw Error(`Duplicate record ID on ${task.id}: ${record.id}`);
+      ids.add(record.id);
+      for (const field of ['recorded_at', 'method']) {
+        if (typeof record[field] !== 'string' || !record[field].trim()) throw Error(`Record ${record.id}.${field} must be nonempty text.`);
+      }
+      if (!RECORD_STATUSES.includes(record.status)) throw Error(`Invalid status for record ${record.id}.`);
+      for (const field of ['performed_at', 'parameters', 'rationale', 'changes', 'code', 'software', 'notes']) {
+        if (Object.hasOwn(record, field) && typeof record[field] !== 'string') throw Error(`Record ${record.id}.${field} must be text.`);
+      }
+      for (const field of ['inputs', 'outputs']) {
+        if (Object.hasOwn(record, field) && (!Array.isArray(record[field]) || record[field].some(value => typeof value !== 'string'))) throw Error(`Record ${record.id}.${field} must be a list of strings.`);
+      }
+    }
+  }
+  if (Object.hasOwn(task, 'selected_record_id') && (typeof task.selected_record_id !== 'string' ||
+      !(task.records || []).some(record => record.id === task.selected_record_id))) throw Error(`Unknown selected record on ${task.id}.`);
+}
+
+function validateIdeas(project, taskIds) {
+  if (!Object.hasOwn(project, 'ideas')) return;
+  if (!Array.isArray(project.ideas) || project.ideas.length > MAX_IDEAS) throw Error(`ideas must be a list with at most ${MAX_IDEAS} entries.`);
+  const ids = new Set();
+  for (const idea of project.ideas) {
+    if (!idea || typeof idea !== 'object' || Array.isArray(idea) ||
+        typeof idea.id !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(idea.id)) throw Error('Idea IDs must use letters, numbers, underscores, or hyphens (1–64 characters).');
+    if (ids.has(idea.id)) throw Error(`Duplicate idea ID: ${idea.id}`);
+    ids.add(idea.id);
+    for (const field of ['title', 'created_at']) {
+      if (typeof idea[field] !== 'string' || !idea[field].trim()) throw Error(`Idea ${idea.id}.${field} must be nonempty text.`);
+    }
+    if (!IDEA_KINDS.includes(idea.kind)) throw Error(`Invalid kind for idea ${idea.id}.`);
+    if (!IDEA_STATUSES.includes(idea.status)) throw Error(`Invalid status for idea ${idea.id}.`);
+    for (const field of ['notes', 'revisit_when', 'resolution', 'updated_at', 'resolved_at', 'related_task_id']) {
+      if (Object.hasOwn(idea, field) && typeof idea[field] !== 'string') throw Error(`Idea ${idea.id}.${field} must be text.`);
+    }
+    if (Object.hasOwn(idea, 'related_task_id') && !taskIds.has(idea.related_task_id)) throw Error(`Unknown related task on idea ${idea.id}.`);
+  }
+}
 
 function assertJsonSafe(value, active = new Set(), depth = 0) {
   if (depth > 50) throw Error('Project nesting is too deep.');
@@ -71,6 +168,7 @@ export function validateProject(input) {
     }
     if (Object.hasOwn(normalized, 'step_number') && (!Number.isSafeInteger(normalized.step_number) || normalized.step_number < 1)) throw Error(`${t.id}.step_number must be a positive whole number.`);
     if (normalized.parent_id !== undefined && normalized.parent_id !== null && typeof normalized.parent_id !== 'string') throw Error(`${t.id}.parent_id must be a task ID or null.`);
+    validateOperationFields(normalized);
     return normalized;
   });
   // Upgrade the old one-level checklist into real child tasks, in memory only.
@@ -98,6 +196,7 @@ export function validateProject(input) {
   const assigned = project.tasks.filter(t=>!t.parent_id && t.step_number !== undefined).map(t=>t.step_number);
   if(new Set(assigned).size !== assigned.length)throw Error('Main step numbers must be unique.');
   const parents = new Map(project.tasks.map(t => [t.id, t.parent_id]));
+  const tasksById = new Map(project.tasks.map(t => [t.id, t]));
   for (const task of project.tasks) {
     if (task.parent_id != null && !ids.has(task.parent_id)) throw Error(`Unknown parent “${task.parent_id}” on ${task.id}.`);
     const seen = new Set([task.id]);
@@ -105,6 +204,14 @@ export function validateProject(input) {
     while (parent != null) {
       if (seen.has(parent)) throw Error('Parent cycle: a step cannot belong to itself or one of its descendants.');
       seen.add(parent); parent = parents.get(parent);
+    }
+    if (Object.hasOwn(task, 'overview_id')) {
+      const overview = tasksById.get(task.overview_id);
+      if (taskLayer(task) !== 'operation' || !overview || overview.id === task.id || taskLayer(overview) !== 'overview') throw Error(`Invalid overview association on ${task.id}.`);
+    }
+    if (Object.hasOwn(task, 'operation_id')) {
+      const operation = tasksById.get(task.operation_id);
+      if (taskLayer(task) !== 'processing' || !operation || operation.id === task.id || taskLayer(operation) !== 'operation') throw Error(`Invalid operation association on ${task.id}.`);
     }
   }
   for (const task of project.tasks) for (const dependency of task.depends_on) {
@@ -127,7 +234,62 @@ export function validateProject(input) {
   for (const [id, p] of Object.entries(project.layout.positions)) {
     if (!p || !Number.isFinite(p.x) || !Number.isFinite(p.y) || Math.abs(p.x) > 10000000 || Math.abs(p.y) > 10000000) throw Error(`Invalid layout position: ${id}`);
   }
+  if (Object.hasOwn(project.layout, 'layer_positions')) {
+    const positions = project.layout.layer_positions;
+    if (!positions || typeof positions !== 'object' || Array.isArray(positions)) throw Error('layout.layer_positions must be an object.');
+    for (const [id, p] of Object.entries(positions)) {
+      if (!ids.has(id)) throw Error(`Unknown task in layout.layer_positions: ${id}`);
+      if (!p || typeof p !== 'object' || Array.isArray(p) || !Number.isFinite(p.x) || !Number.isFinite(p.y) ||
+          Math.abs(p.x) > 10000000 || Math.abs(p.y) > 10000000) throw Error(`Invalid layer layout position: ${id}`);
+    }
+  }
+  validateIdeas(project, ids);
   return project;
+}
+
+export function addIdea(project, item) {
+  const next = validateProject(project);
+  assertJsonSafe(item);
+  next.ideas = [...(next.ideas || []), clone(item)];
+  return validateProject(next);
+}
+
+export function updateIdea(project, id, patch) {
+  const next = validateProject(project), idea = next.ideas?.find(item => item.id === id);
+  if (!idea) throw Error('Idea not found.');
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw Error('Idea changes must be an object.');
+  assertJsonSafe(patch);
+  for (const field of ['id', 'created_at']) {
+    if (Object.hasOwn(patch, field) && patch[field] !== idea[field]) throw Error(`Idea ${field} cannot be changed.`);
+  }
+  Object.assign(idea, clone(patch));
+  // A patch may unlink an idea; null is never persisted in the document.
+  if (patch.related_task_id === null) delete idea.related_task_id;
+  return validateProject(next);
+}
+
+export function removeIdea(project, id) {
+  const next = validateProject(project);
+  if (!next.ideas?.some(item => item.id === id)) throw Error('Idea not found.');
+  next.ideas = next.ideas.filter(item => item.id !== id);
+  return validateProject(next);
+}
+
+export function addOperationRecord(project, taskId, record) {
+  const next = validateProject(project), task = next.tasks.find(entry => entry.id === taskId);
+  if (!task) throw Error('Operation not found.');
+  if (!['operation', 'processing'].includes(taskLayer(task))) throw Error('Records can only be added to operations or processing steps.');
+  assertJsonSafe(record);
+  task.records = [...(task.records || []), clone(record)];
+  return validateProject(next);
+}
+
+export function selectOperationRecord(project, taskId, recordId) {
+  const next = validateProject(project), task = next.tasks.find(entry => entry.id === taskId);
+  if (!task) throw Error('Operation not found.');
+  if (!['operation', 'processing'].includes(taskLayer(task))) throw Error('Records can only be selected on operations or processing steps.');
+  task.selected_record_id = recordId;
+  return validateProject(next);
 }
 export function addDependency(project, source, target) {
   if (!project.tasks.some(t => t.id === source)) throw Error('Source task not found.');
@@ -167,13 +329,26 @@ export function addBranchDependency(project, source, target) {
 
 export function removeTask(project, id) {
   const next = clone(project);
-  const parent = next.tasks.find(t => t.id === id)?.parent_id ?? null;
+  const removed = next.tasks.find(t => t.id === id);
+  const parent = removed?.parent_id ?? null;
+  const overview = removed ? ancestorLayerId(next, removed, 'overview') : null;
   next.tasks = next.tasks.filter(t => t.id !== id).map(t => {
     t.depends_on = t.depends_on.filter(d => d !== id);
+    // Keep an operation's evidence and association usable when deletion promotes
+    // a legacy child. Ordinary legacy children retain their existing behavior.
+    if (t.parent_id === id && !parent && taskLayer(t) === 'operation' &&
+        (Object.hasOwn(t, 'overview_id') || Object.hasOwn(t, 'records') || processingStepsFor(project, t.id).length)) t.layer = 'operation';
     if (t.parent_id === id) { delete t.step_number; if (parent) t.parent_id = parent; else delete t.parent_id; }
+    if (t.overview_id === id) {
+      delete t.overview_id;
+      if (overview && overview !== t.id && taskLayer(t) === 'operation') t.overview_id = overview;
+    }
+    if (t.operation_id === id) delete t.operation_id;
     return t;
   });
+  for (const idea of next.ideas || []) if (idea.related_task_id === id) delete idea.related_task_id;
   delete next.layout.positions[id];
+  if (next.layout.layer_positions) delete next.layout.layer_positions[id];
   return next;
 }
 export function autoLayout(project) {
@@ -246,6 +421,24 @@ export function stageLayout(project) {
     x += column.width + columnGap;
   }
   return {positions, stages};
+}
+
+/** Overview columns follow full-project step numbers, independent of dependencies. */
+export function overviewStepLayout(project) {
+  const visible=new Map(overviewGraph(project).tasks.map(task=>[task.id,task]));
+  const rows=stepOutline(project).filter(row=>taskLayer(row.task)==='overview');
+  const padding=24,header=48,columnGap=84;
+  const measured=rows.map(row=>({...row,size:taskSize(visible.get(row.task.id))}));
+  const contentHeight=Math.max(0,...measured.map(row=>row.size.height));
+  const positions={},stages=[];
+  let x=0;
+  for(const [index,row] of measured.entries()){
+    const width=row.size.width+2*padding;
+    positions[row.task.id]={x:x+padding,y:header+padding+(contentHeight-row.size.height)/2};
+    stages.push({index,x,y:0,width,height:header+2*padding+contentHeight,taskIds:[row.task.id],label:`Step ${row.number}`});
+    x+=width+columnGap;
+  }
+  return {positions,stages};
 }
 
 /** Trace both directions independently so another prerequisite is not highlighted. */
@@ -340,6 +533,10 @@ export function setParent(project, id, parent = null) {
   const next = clone(project), task = next.tasks.find(t => t.id === id);
   if (!task) throw Error('Step not found.');
   if ((task.parent_id ?? null) !== parent) delete task.step_number;
+  // Changing containment must not hide recorded work by reclassifying a legacy
+  // operation. An explicit layer edit remains available to change its role.
+  if (parent === null && task.parent_id && taskLayer(task) === 'operation' &&
+      (Object.hasOwn(task, 'records') || processingStepsFor(project, task.id).length)) task.layer = 'operation';
   if (parent === null) delete task.parent_id; else task.parent_id = parent;
   return validateProject(next);
 }

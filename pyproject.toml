@@ -34,7 +34,7 @@ include-package-data = false
 
 [tool.setuptools.package-data]
 research_flow = [
-  "web/index.html", "web/app.js", "web/model.mjs", "web/connection.mjs",
+  "web/index.html", "web/app.js", "web/model.mjs", "web/connection.mjs", "web/layers.mjs",
   "web/styles.css", "web/assets/research-flow-icon-light.svg",
   "web/assets/research-flow-icon-dark.svg",
 ]
