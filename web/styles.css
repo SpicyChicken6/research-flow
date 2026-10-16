@@ -126,3 +126,22 @@ dialog{background:#fff;color:var(--ink);width:min(445px,calc(100vw - 32px));max-
 .minimap-wrap{cursor:grab;touch-action:none;user-select:none}
 .minimap-wrap .mini-node{cursor:grab}
 .minimap-wrap.dragging,.minimap-wrap.dragging .mini-node{cursor:grabbing}
+
+/* Saved HTML keeps the same navigation while presenting the workflow as a document. */
+.read-only .editor-help{display:none}
+.read-only .project-title{cursor:text}
+.read-only .project-title:hover{background:transparent}
+.read-only .task-node{cursor:pointer}
+.read-only #save-state{display:flex;flex-direction:column;align-items:flex-end;gap:3px;line-height:1.35}
+.viewer-label{font-weight:600;color:var(--ink)}
+.viewer-saved{font-size:10px}
+.viewer-title{font-size:21px;font-weight:600;letter-spacing:-.4px;line-height:1.4;margin:0;overflow-wrap:anywhere;user-select:text}
+.viewer-value{font-size:12px;font-weight:400;color:var(--ink);line-height:1.7;white-space:pre-wrap;overflow-wrap:anywhere;margin-top:8px;user-select:text}
+.viewer-empty{color:var(--muted)}
+.read-only .inspector .dependency-name{white-space:normal;overflow-wrap:anywhere}
+.read-only .inspector details .field-label{margin-top:15px}
+@media(max-width:700px){
+  .read-only .header-actions{min-width:0;flex-shrink:1}
+  .read-only #save-state{font-size:10px;white-space:normal;text-align:right;max-width:150px;padding-right:2px}
+  .viewer-saved{font-size:9px}
+}

@@ -2,9 +2,12 @@
 
 ## Unreleased
 
-- Generate a standalone SVG beside the YAML on each server Save, showing the full
-  workflow in the selected Stages or Freeform layout. Preview errors leave saved
-  workflow data intact and offer a retry; unrelated SVG files are preserved.
+- Generate a self-contained, read-only HTML beside the YAML on each server Save.
+  Explore the full workflow offline with zoom, branch focus, layout switching and
+  task details; edit through the running app. The viewer shows when it was saved.
+- Keep SVG available through **More → Export SVG** in the running app. Existing
+  SVG files remain untouched. Preview errors leave saved workflow data intact and
+  offer a retry; unrelated HTML files are preserved.
 
 ## 0.8.7 — self-updates and dependency stages
 

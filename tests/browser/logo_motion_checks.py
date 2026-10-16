@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Logo-motion integration checks; Playwright and Pillow are test-only."""
-import io, json, re, shutil, xml.etree.ElementTree as ET
+import io, json, os, re, shutil, xml.etree.ElementTree as ET
 from pathlib import Path
 from PIL import Image, ImageChops
 from playwright.sync_api import sync_playwright, expect
@@ -26,7 +26,7 @@ def pause(p):
  p.locator('[data-logo-dots]').evaluate('(el)=>{window.__turn=el.getAnimations()[0];window.__turn.pause();window.__turn.currentTime=0;}')
 def matrix(p,selector):return p.locator(selector).evaluate('(el)=>{const m=el.getScreenCTM();return [m.a,m.b,m.c,m.d,m.e,m.f]}')
 with sync_playwright() as pw:
- b=pw.chromium.launch(executable_path=shutil.which('chromium'),headless=True,args=['--no-sandbox'])
+ b=pw.chromium.launch(executable_path=os.environ.get('CHROMIUM_PATH') or shutil.which('chromium'),headless=True,args=['--no-sandbox'])
  p=opened(b);check(count(p)==1,'startup creates one dot-ring animation');pause(p)
  check(p.evaluate('__turn.effect.getTiming().duration')==720,'startup duration is 720 ms')
  check(p.evaluate('__turn.effect.getTiming().iterations')==1,'startup is one revolution, not a loop')

@@ -28,7 +28,7 @@ done
 | --- | --- |
 | `tests/test_*.py` | YAML validation, migrations, saves, conflicts, backups, authentication, CLI startup, updates and current-folder discovery |
 | `tests/test_*.mjs` | Graph model, branches, connections, layout and logo animation |
-| `tests/browser/` | Dependency stages/freeform, editing, export/reopen, hierarchy, deletion, minimap, animation, authenticated save/reload and SVG previews |
+| `tests/browser/` | Dependency stages/freeform, editing, export/reopen, hierarchy, deletion, minimap, animation, authenticated save/reload, read-only offline HTML previews and SVG export |
 | `tests/installed_checks.py` | Installed command, bundled assets and saving outside the source checkout |
 | `tests/update_install_checks.py` | Real same-version self-updates in disposable pip and pipx installations, suffix/home targeting and workflow preservation |
 
@@ -77,7 +77,8 @@ local wheels with network indexes disabled. It never updates your existing app.
 ## Repository layout
 
 - `server.py`, `updater.py`, `__init__.py`, `__main__.py`: Python server, updater and installed entry points.
-- `workflow_plot.py`: pure, dependency-free SVG workflow renderer used on Save.
+- `workflow_html.py`: standalone HTML builder used for read-only previews on Save.
+- `workflow_plot.py`: pure, dependency-free renderer for optional SVG exports.
 - `web/`: interface, graph model, styles and SVG assets.
 - `scripts/build_preview.py`: build editable standalone HTML without changing source.
 - `examples/`: demonstration workflow used by the preview builder and tests.

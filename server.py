@@ -3,6 +3,7 @@
 from __future__ import annotations
 import argparse
 from contextlib import ExitStack
+from datetime import datetime, timezone
 import errno
 import fcntl
 import hashlib
@@ -24,8 +25,10 @@ from urllib.parse import urlsplit
 import yaml
 
 if __package__:
+    from .workflow_html import render_workflow_html
     from .workflow_plot import render_workflow_svg
 else:
+    from workflow_html import render_workflow_html
     from workflow_plot import render_workflow_svg
 
 ROOT = Path(__file__).resolve().parent
@@ -249,7 +252,7 @@ class ProjectStore:
             while remaining:
                 written = source.write(remaining)
                 if not written:
-                    raise OSError('Could not finish writing the SVG preview.')
+                    raise OSError('Could not finish writing the HTML preview.')
                 remaining = remaining[written:]
             source.truncate(len(data))
             source.flush()
@@ -263,15 +266,15 @@ class ProjectStore:
                 write_content(original)
                 os.fchmod(source.fileno(), original_mode)
             except OSError:
-                raise OSError('Could not restore the previous SVG after a write failure; '
+                raise OSError('Could not restore the previous HTML after a write failure; '
                               'the generated preview may be incomplete. Retry Save.') from error
             raise
 
     def _write_preview(self, document, layout_mode, saved_revision):
         """Publish a new sidecar or refresh its verified, locked file descriptor."""
-        path = self.path.with_suffix('.svg')
+        path = self.path.with_suffix('.html')
         if path == self.path:
-            raise ValueError('The workflow itself uses the .svg filename.')
+            raise ValueError('The workflow itself uses the .html filename.')
         marker = f'<!-- research-flow-preview source-sha256:{revision(self.path.name.encode("utf-8"))} -->\n'.encode('ascii')
 
         def signature(info):
@@ -298,7 +301,10 @@ class ProjectStore:
                 if (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino) or source.read(len(marker)) != marker:
                     raise ValueError(f'{path.name} already exists and is not this workflow’s generated preview.')
                 before = signature(os.fstat(source.fileno()))
-            content = marker + render_workflow_svg(document, layout_mode=layout_mode).encode('utf-8')
+            content = marker + render_workflow_html(
+                document, layout_mode=layout_mode,
+                saved_at=datetime.now(timezone.utc).isoformat(timespec='seconds').replace('+00:00', 'Z'),
+            ).encode('utf-8')
             mode = self.path.stat().st_mode & 0o666
             if revision(self.path.read_bytes()) != saved_revision:
                 raise ValueError('The workflow changed on disk before its preview was ready.')
@@ -376,7 +382,7 @@ class ProjectStore:
             except (OSError, ValueError, UnicodeError) as error:
                 # YAML is already committed: never report this as a failed save or
                 # leave the client holding an obsolete revision after a preview error.
-                saved['preview_warning'] = f'Workflow saved, but the SVG preview was not updated: {error}'
+                saved['preview_warning'] = f'Workflow saved, but the HTML preview was not updated: {error}'
             return saved
 
 STATIC = {'/': ('index.html', 'text/html; charset=utf-8'), '/index.html': ('index.html', 'text/html; charset=utf-8'),
@@ -461,6 +467,12 @@ def make_handler(store, *, auth_token=None, browser_port=None):
                 if method == 'POST' and path == '/api/validate':
                     result = parse_project(payload.get('yaml'))
                     self.send_json(200, {'document': result})
+                elif method == 'POST' and path == '/api/export/svg':
+                    layout_mode = payload.get('layout_mode', 'stages')
+                    if layout_mode not in ('stages', 'freeform'):
+                        raise ValidationError('Export layout must be stages or freeform.')
+                    document = validate_project(payload.get('document'))
+                    self.send_json(200, {'svg': render_workflow_svg(document, layout_mode=layout_mode)})
                 elif method == 'PUT' and path == '/api/project':
                     self.send_json(200, store.save(payload.get('document'), payload.get('revision'),
                                                    preview_layout=payload.get('preview_layout', 'stages')))

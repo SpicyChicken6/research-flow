@@ -1,4 +1,4 @@
-"""Persistence and failure behavior of the workflow's automatic SVG sidecar."""
+"""Persistence and failure behavior of the workflow's automatic read-only HTML sidecar."""
 import copy
 import http.client
 import json
@@ -10,7 +10,7 @@ import tempfile
 import threading
 import unittest
 from unittest import mock
-import xml.etree.ElementTree as ET
+import re
 from http.server import ThreadingHTTPServer
 
 try:
@@ -51,7 +51,7 @@ class PreviewStoreTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.path = Path(self.temp.name).resolve() / 'workflow.yaml'
         self.path.write_text(WORKFLOW)
-        self.preview = self.path.with_suffix('.svg')
+        self.preview = self.path.with_suffix('.html')
         self.store = ProjectStore(self.path)
 
     def save(self, name='Saved workflow', **kwargs):
@@ -60,9 +60,12 @@ class PreviewStoreTests(unittest.TestCase):
         return self.store.save(snapshot['document'], snapshot['revision'], **kwargs)
 
     def assertPreviewContains(self, text):
-        tree = ET.fromstring(self.preview.read_bytes())
-        self.assertEqual(tree.tag, '{http://www.w3.org/2000/svg}svg')
-        self.assertIn(text, ''.join(tree.itertext()))
+        content = self.preview.read_text()
+        self.assertIn('<!doctype html>', content)
+        self.assertIn('window.RESEARCH_FLOW_VIEWER = ', content)
+        initial = re.search(r'<script id="initial-project" type="application/json">(.*?)</script>', content, re.S)
+        self.assertIsNotNone(initial)
+        self.assertIn(text, json.loads(initial[1])['project']['name'])
 
     def assertSuccessfulWarning(self, result, title):
         self.assertEqual(result['revision'], self.store.read()['revision'])
@@ -80,7 +83,7 @@ class PreviewStoreTests(unittest.TestCase):
         self.assertEqual(self.path.read_bytes(), original)
         self.assertEqual(self.preview.read_text(), 'A manually created picture')
 
-    def test_every_save_creates_or_replaces_readable_svg_without_mutating_draft(self):
+    def test_every_save_creates_or_replaces_readable_html_without_mutating_draft(self):
         snapshot = self.store.read()
         snapshot['document']['project']['name'] = 'First saved workflow'
         draft = copy.deepcopy(snapshot['document'])
@@ -97,20 +100,28 @@ class PreviewStoreTests(unittest.TestCase):
         self.assertEqual(result['preview_file'], str(self.preview.resolve()))
         self.assertIsNone(result['preview_warning'])
 
-    def test_yml_file_uses_matching_svg_stem(self):
+    def test_yml_file_uses_matching_html_stem(self):
         self.path = self.path.rename(self.path.with_name('my study.yml'))
         self.store = ProjectStore(self.path)
         result = self.save()
-        self.assertEqual(Path(result['preview_file']), self.path.with_suffix('.svg'))
-        self.assertTrue(self.path.with_suffix('.svg').is_file())
+        self.assertEqual(Path(result['preview_file']), self.path.with_suffix('.html'))
+        self.assertTrue(self.path.with_suffix('.html').is_file())
 
-    def test_svg_permissions_do_not_expose_private_workflow(self):
+    def test_html_permissions_do_not_expose_private_workflow(self):
         self.path.chmod(0o600)
         self.save()
         self.assertEqual(stat.S_IMODE(self.preview.stat().st_mode), 0o600)
         self.preview.chmod(0o644)
         self.save('Updated private workflow')
         self.assertEqual(stat.S_IMODE(self.preview.stat().st_mode), 0o600)
+
+    def test_previous_svg_is_preserved_when_html_preview_is_created(self):
+        previous = self.path.with_suffix('.svg')
+        previous.write_text('Previously generated or manually edited SVG')
+        result = self.save()
+        self.assertIsNone(result['preview_warning'])
+        self.assertTrue(self.preview.is_file())
+        self.assertEqual(previous.read_text(), 'Previously generated or manually edited SVG')
 
     def test_stale_revision_and_invalid_document_leave_both_files_untouched(self):
         stale = self.store.read()
@@ -138,7 +149,7 @@ class PreviewStoreTests(unittest.TestCase):
     def test_render_failure_keeps_old_preview_and_returns_new_revision(self):
         self.save()
         preview = self.preview.read_bytes()
-        with mock.patch.object(server, 'render_workflow_svg', side_effect=ValueError('Cannot render preview')):
+        with mock.patch.object(server, 'render_workflow_html', side_effect=ValueError('Cannot render preview')):
             result = self.save('Saved despite renderer failure')
         self.assertSuccessfulWarning(result, 'Saved despite renderer failure')
         self.assertEqual(self.preview.read_bytes(), preview)
@@ -224,7 +235,7 @@ class PreviewStoreTests(unittest.TestCase):
     def test_existing_preview_replaced_with_artwork_before_write_is_preserved(self):
         self.save()
         artwork = b'<svg xmlns="http://www.w3.org/2000/svg"><text>Unrelated artwork</text></svg>'
-        replacement = self.path.with_name('replacement.svg')
+        replacement = self.path.with_name('replacement.html')
         replacement.write_bytes(artwork)
         replacement.chmod(0o640)
         self.save_during_preview_replacement(lambda: replacement.replace(self.preview))
@@ -233,11 +244,11 @@ class PreviewStoreTests(unittest.TestCase):
 
     def test_existing_preview_replaced_with_symlink_before_write_is_preserved(self):
         self.save()
-        target = self.path.with_name('personal.svg')
+        target = self.path.with_name('personal.html')
         artwork = b'My personal artwork'
         target.write_bytes(artwork)
         target.chmod(0o640)
-        replacement = self.path.with_name('replacement.svg')
+        replacement = self.path.with_name('replacement.html')
         replacement.symlink_to(target)
         self.save_during_preview_replacement(lambda: replacement.replace(self.preview))
         self.assertTrue(self.preview.is_symlink())
@@ -261,7 +272,7 @@ class PreviewStoreTests(unittest.TestCase):
         self.save()
         saved, preview = self.path.read_bytes(), self.preview.read_bytes()
         with mock.patch.object(server.os, 'replace', side_effect=PermissionError('Workflow is locked')):
-            with mock.patch.object(server, 'render_workflow_svg') as render:
+            with mock.patch.object(server, 'render_workflow_html') as render:
                 with self.assertRaises(PermissionError):
                     self.save('This workflow was not saved')
         render.assert_not_called()
@@ -269,14 +280,14 @@ class PreviewStoreTests(unittest.TestCase):
         self.assertEqual(self.preview.read_bytes(), preview)
         self.assertEqual(list(self.path.parent.glob('.*.tmp')), [])
 
-    def test_existing_unowned_svg_is_preserved_and_workflow_still_saves(self):
+    def test_existing_unowned_html_is_preserved_and_workflow_still_saves(self):
         self.preview.write_text('<svg xmlns="http://www.w3.org/2000/svg"><text>My artwork</text></svg>')
         original = self.preview.read_bytes()
         result = self.save('Saved next to existing artwork')
         self.assertSuccessfulWarning(result, 'Saved next to existing artwork')
         self.assertEqual(self.preview.read_bytes(), original)
 
-    def test_concurrent_new_svg_collision_is_preserved_and_workflow_still_saves(self):
+    def test_concurrent_new_html_collision_is_preserved_and_workflow_still_saves(self):
         original_link = os.link
         artwork = '<svg xmlns="http://www.w3.org/2000/svg"><text>New artwork</text></svg>'
 
@@ -320,7 +331,7 @@ class PreviewStoreTests(unittest.TestCase):
         self.save()
         other = self.path.with_name('other.yaml')
         other.write_text(WORKFLOW)
-        other_preview = other.with_suffix('.svg')
+        other_preview = other.with_suffix('.html')
         other_preview.write_bytes(self.preview.read_bytes())
         original = other_preview.read_bytes()
         store = ProjectStore(other)
@@ -330,10 +341,10 @@ class PreviewStoreTests(unittest.TestCase):
         self.assertIsNone(result['preview_file'])
         self.assertEqual(other_preview.read_bytes(), original)
 
-    def test_svg_symlinks_and_directories_are_preserved(self):
+    def test_html_symlinks_and_directories_are_preserved(self):
         self.save()
         original = self.preview.read_bytes()
-        target = self.path.with_name('personal.svg')
+        target = self.path.with_name('personal.html')
         # Even an otherwise owned preview must not be replaced through a symlink.
         target.write_bytes(original)
         self.preview.unlink()
@@ -351,7 +362,7 @@ class PreviewStoreTests(unittest.TestCase):
     def test_hardlinked_preview_is_preserved(self):
         self.save()
         original = self.preview.read_bytes()
-        alias = self.path.with_name('personal.svg')
+        alias = self.path.with_name('personal.html')
         os.link(self.preview, alias)
         result = self.save('Saved with hardlinked preview')
         self.assertSuccessfulWarning(result, 'Saved with hardlinked preview')
@@ -375,8 +386,8 @@ class PreviewStoreTests(unittest.TestCase):
         self.assertSuccessfulWarning(result, 'Saved with locked preview')
         self.assertEqual(self.preview.read_bytes(), original)
 
-    def test_workflow_named_svg_is_not_replaced_by_its_preview(self):
-        self.path = self.path.rename(self.path.with_suffix('.svg'))
+    def test_workflow_named_html_is_not_replaced_by_its_preview(self):
+        self.path = self.path.rename(self.path.with_suffix('.html'))
         self.store = ProjectStore(self.path)
         result = self.save('Still a YAML workflow')
         self.assertSuccessfulWarning(result, 'Still a YAML workflow')
@@ -407,24 +418,24 @@ class PreviewHttpTests(unittest.TestCase):
     def test_save_request_applies_layout_and_returns_preview_path(self):
         snapshot = self.store.read()
         snapshot['preview_layout'] = 'freeform'
-        with mock.patch.object(server, 'render_workflow_svg', wraps=server.render_workflow_svg) as render:
+        with mock.patch.object(server, 'render_workflow_html', wraps=server.render_workflow_html) as render:
             status, result = self.request_save(snapshot)
         self.assertEqual(status, 200)
-        self.assertEqual(result['preview_file'], str(self.path.with_suffix('.svg')))
+        self.assertEqual(result['preview_file'], str(self.path.with_suffix('.html')))
         self.assertIsNone(result['preview_warning'])
         self.assertIn('freeform', [*render.call_args.args, *render.call_args.kwargs.values()])
 
     def test_preview_failure_is_http_success_with_current_workflow(self):
         snapshot = self.store.read()
         snapshot['document']['project']['name'] = 'Successful HTTP save'
-        with mock.patch.object(server, 'render_workflow_svg', side_effect=OSError('Preview unavailable')):
+        with mock.patch.object(server, 'render_workflow_html', side_effect=OSError('Preview unavailable')):
             status, result = self.request_save(snapshot)
         self.assertEqual(status, 200)
         self.assertTrue(result['preview_warning'])
         self.assertIsNone(result['preview_file'])
         self.assertEqual(result['revision'], self.store.read()['revision'])
         self.assertEqual(result['document']['project']['name'], 'Successful HTTP save')
-        self.assertFalse(self.path.with_suffix('.svg').exists())
+        self.assertFalse(self.path.with_suffix('.html').exists())
 
 
 if __name__ == '__main__':
